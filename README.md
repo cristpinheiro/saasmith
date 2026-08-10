@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SaaSMith
 
-## Getting Started
+Desktop app for SaaS development — define modules visually and generate standardized backend and frontend code.
 
-First, run the development server:
+## What it does
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+SaaSMith lets you describe your data model through a UI and generates production-ready code for each module:
+
+**Backend (Fastify + Drizzle + PostgreSQL)**
+- Drizzle schema + TypeScript types
+- Repository (database queries)
+- Service (business logic layer)
+- Route handlers with authentication middleware
+- SQL migration file
+
+**Frontend (Next.js)**
+- TypeScript types
+- API client functions (fetch wrappers)
+
+Role-based access control is defined per module and per operation — you choose which roles can `create`, `read`, `update`, or `delete` each resource.
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Desktop shell | [Tauri v2](https://tauri.app) (Rust) |
+| UI | Next.js 16 + React 19 + Tailwind CSS v4 |
+| State | Zustand |
+| Generated ORM | Drizzle ORM |
+| Generated backend | Fastify |
+| Generated DB | PostgreSQL |
+
+## Requirements
+
+- [Node.js](https://nodejs.org) 18+
+- [Rust](https://rustup.rs) (stable toolchain)
+- Windows: WebView2 (ships with Windows 11, available for Windows 10)
+
+## Development
+
+```powershell
+# Install dependencies
+npm install
+
+# Run in development mode (opens desktop window)
+$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+npm run tauri:dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+> First run compiles all Rust dependencies (~3-5 minutes). Subsequent runs are fast (~10-20 seconds).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```powershell
+$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+npm run tauri:build
+```
 
-## Learn More
+Produces a Windows installer at `src-tauri/target/release/bundle/`.
 
-To learn more about Next.js, take a look at the following resources:
+## Project structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+saasmith/
+├── app/                  # Next.js pages and layout
+├── components/           # UI components
+│   ├── WelcomeScreen     # Project creation / open
+│   ├── Header            # Project name, save, settings
+│   ├── Sidebar           # Module list
+│   ├── ModuleDetail      # Module overview + code preview
+│   ├── CreateModuleModal # Create / edit module (3-step wizard)
+│   └── ProjectSettingsModal # Manage roles
+├── lib/
+│   ├── types.ts          # Core data types (Project, Module, Field…)
+│   ├── store/project.ts  # Zustand store + file I/O via Tauri
+│   ├── env.ts            # Tauri environment detection
+│   └── generator/        # Code generation templates
+└── src-tauri/            # Rust/Tauri shell
+    ├── src/commands.rs   # read_project / write_project commands
+    └── capabilities/     # Tauri permission definitions
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## How it works
 
-## Deploy on Vercel
+1. **Create a project** — give it a name and define your roles (`admin`, `user`, etc.)
+2. **Add modules** — name the entity, define fields with types, choose which CRUD operations to expose and which roles can access them
+3. **Set output path** — point SaaSMith at your SaaS project folder
+4. **Generate** — files are written directly into `backend/src/` and `frontend/src/api/`
+5. **Preview** — inspect generated code inside the app before writing to disk
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The project configuration is saved as a `.saasmith.json` file — this is the source of truth. Regenerating a module overwrites its files; manual edits to generated files will be lost.
