@@ -1,6 +1,6 @@
 import type { Field, FieldType, Module, Project, Role } from "../types"
 
-const AUTO_FIELDS = new Set(["id", "createdAt", "updatedAt"])
+const AUTO_FIELDS = new Set(["id", "createdAt", "updatedAt", "created_at", "updated_at"])
 
 function domainFields(mod: Module): Field[] {
   return mod.fields.filter((f) => !AUTO_FIELDS.has(f.name))
