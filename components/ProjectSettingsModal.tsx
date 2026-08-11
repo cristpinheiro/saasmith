@@ -3,6 +3,7 @@
 import { useState } from "react"
 import type { Role } from "../lib/types"
 import { useProjectStore } from "../lib/store/project"
+import { useSettingsStore } from "../lib/store/settings"
 
 type Props = {
   onClose: () => void
@@ -10,7 +11,13 @@ type Props = {
 
 export default function ProjectSettingsModal({ onClose }: Props) {
   const { project, addRole, updateRole, removeRole } = useProjectStore()
+  const { apiKey, setApiKey, baseUrl, setBaseUrl, authToken, setAuthToken, model, setModel } = useSettingsStore()
   const [newRoleName, setNewRoleName] = useState("")
+  const [apiKeyInput, setApiKeyInput] = useState(apiKey)
+  const [authTokenInput, setAuthTokenInput] = useState(authToken)
+  const [baseUrlInput, setBaseUrlInput] = useState(baseUrl)
+  const [modelInput, setModelInput] = useState(model)
+  const [showKey, setShowKey] = useState(false)
 
   if (!project) return null
 
@@ -29,7 +36,106 @@ export default function ProjectSettingsModal({ onClose }: Props) {
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 text-sm">✕</button>
         </div>
 
-        <div className="px-6 py-5 flex flex-col gap-4">
+        <div className="px-6 py-5 flex flex-col gap-6">
+          {/* API Key */}
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Claude API Key</h3>
+            <div className="flex gap-2">
+              <input
+                type={showKey ? "text" : "password"}
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="sk-ant-..."
+                className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500 font-mono"
+              />
+              <button
+                onClick={() => setShowKey((v) => !v)}
+                className="rounded border border-zinc-700 bg-zinc-800 px-2.5 text-xs text-zinc-400 hover:text-zinc-200"
+              >
+                {showKey ? "hide" : "show"}
+              </button>
+              <button
+                onClick={() => setApiKey(apiKeyInput.trim())}
+                className="rounded bg-indigo-600 px-3 text-xs text-white hover:bg-indigo-500"
+              >
+                Save
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-zinc-600">
+              Stored locally. Required for the AI chat feature.
+            </p>
+          </div>
+
+          {/* Auth Token */}
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Auth Token <span className="normal-case text-zinc-600">(Authorization: Bearer)</span></h3>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={authTokenInput}
+                onChange={(e) => setAuthTokenInput(e.target.value)}
+                placeholder="UUID ou token do proxy..."
+                className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500 font-mono"
+              />
+              <button
+                onClick={() => setAuthToken(authTokenInput.trim())}
+                className="rounded bg-indigo-600 px-3 text-xs text-white hover:bg-indigo-500"
+              >
+                Save
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-zinc-600">
+              Se preenchido, substitui a API Key. Use para proxies com ANTHROPIC_AUTH_TOKEN.
+            </p>
+          </div>
+
+          {/* Base URL */}
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Claude Base URL</h3>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={baseUrlInput}
+                onChange={(e) => setBaseUrlInput(e.target.value)}
+                placeholder="https://api.anthropic.com (default)"
+                className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500 font-mono"
+              />
+              <button
+                onClick={() => setBaseUrl(baseUrlInput.trim())}
+                className="rounded bg-indigo-600 px-3 text-xs text-white hover:bg-indigo-500"
+              >
+                Save
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-zinc-600">
+              Leave blank to use the default Anthropic API. Set a proxy URL if needed.
+            </p>
+          </div>
+
+          {/* Model */}
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Model</h3>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={modelInput}
+                onChange={(e) => setModelInput(e.target.value)}
+                placeholder="claude-opus-5 (default)"
+                className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-indigo-500 font-mono"
+              />
+              <button
+                onClick={() => setModel(modelInput.trim())}
+                className="rounded bg-indigo-600 px-3 text-xs text-white hover:bg-indigo-500"
+              >
+                Save
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-zinc-600">
+              Model name expected by your proxy. Leave blank for claude-opus-5.
+            </p>
+          </div>
+
+          {/* Roles */}
           <div>
             <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Roles</h3>
             <div className="flex flex-col gap-2">

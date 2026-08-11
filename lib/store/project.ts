@@ -10,7 +10,7 @@ type ProjectStore = {
   openProject: () => Promise<void>
   saveProject: () => Promise<void>
   saveProjectAs: () => Promise<void>
-  newProject: (name: string, roles?: Role[]) => void
+  newProject: (name: string, roles?: Role[], modules?: Module[]) => void
 
   setOutputPath: () => Promise<void>
 
@@ -36,7 +36,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   projectPath: null,
   isDirty: false,
 
-  newProject: (name, roles) => {
+  newProject: (name, roles, modules) => {
     const project: Project = {
       id: crypto.randomUUID(),
       name,
@@ -45,7 +45,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         { id: crypto.randomUUID(), name: "admin" },
         { id: crypto.randomUUID(), name: "user" },
       ],
-      modules: [],
+      modules: modules ?? [],
     }
     set({ project, projectPath: null, isDirty: true })
   },
@@ -94,13 +94,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setOutputPath: async () => {
     if (!isTauri()) return
-    const { open } = await getTauriApis()
-    const path = await open({ directory: true })
-    if (!path) return
-    set((s) => ({
-      project: s.project ? { ...s.project, outputPath: path as string } : null,
-      isDirty: true,
-    }))
+    const { invoke, open } = await getTauriApis()
+    const dir = await open({ directory: true })
+    if (!dir) return
+    const { project } = get()
+    if (!project) return
+    const updatedProject = { ...project, outputPath: dir as string }
+    const configPath = `${dir}/${project.name}.saasmith.json`
+    await invoke("write_project", { path: configPath, content: JSON.stringify(updatedProject, null, 2) })
+    set({ project: updatedProject, projectPath: configPath, isDirty: false })
   },
 
   addModule: (module) =>
