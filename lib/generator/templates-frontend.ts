@@ -163,7 +163,11 @@ export function generateFrontendTsConfig(): string {
 export function generateNextConfig(): string {
   return `import type { NextConfig } from "next"
 
-const nextConfig: NextConfig = {}
+const nextConfig: NextConfig = {
+  turbopack: {
+    root: __dirname,
+  },
+}
 
 export default nextConfig
 `
