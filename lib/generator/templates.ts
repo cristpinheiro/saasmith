@@ -43,8 +43,8 @@ export function generateSchema(mod: Module): string {
   const columns = [
     `  id: uuid().primaryKey().defaultRandom()`,
     ...domainFields(mod).map(fieldToColumn),
-    `  createdAt: timestamp().notNull().defaultNow()`,
-    `  updatedAt: timestamp().notNull().defaultNow()`,
+    `  createdAt: timestamp("created_at").notNull().defaultNow()`,
+    `  updatedAt: timestamp("updated_at").notNull().defaultNow()`,
   ].join(",\n")
 
   return `import { pgTable, uuid, varchar, text, integer, doublePrecision, boolean, date, timestamp, jsonb } from "drizzle-orm/pg-core"
