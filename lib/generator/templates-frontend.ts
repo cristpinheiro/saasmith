@@ -152,7 +152,7 @@ export function generateFrontendTsConfig(): string {
         plugins: [{ name: "next" }],
         paths: { "@/*": ["./src/*"] },
       },
-      include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/dev/types/**/*.ts"],
+      include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
       exclude: ["node_modules"],
     },
     null,
