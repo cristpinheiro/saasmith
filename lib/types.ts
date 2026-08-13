@@ -22,10 +22,17 @@ export type Field = {
 
 export type OperationType = "create" | "readOne" | "readMany" | "update" | "delete"
 
+export type OperationScope = "all" | "tenant" | "own"
+
+export type OperationRule = {
+  roles: string[]
+  scope: OperationScope
+}
+
 export type Operation = {
   type: OperationType
   enabled: boolean
-  roles: string[]
+  rules: OperationRule[]
 }
 
 export type Module = {
@@ -47,4 +54,5 @@ export type Project = {
   outputPath: string | null
   roles: Role[]
   modules: Module[]
+  tenantModule?: string
 }

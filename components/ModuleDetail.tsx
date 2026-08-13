@@ -36,7 +36,7 @@ export default function ModuleDetail({ moduleId, onEdit, onDelete }: Props) {
 
   if (!mod) return <div className="flex-1 p-6 text-sm text-zinc-500">Module not found.</div>
 
-  const previewFiles = getGeneratedFiles(mod, "<output>")
+  const previewFiles = getGeneratedFiles(mod, "<output>", project ?? undefined)
 
   async function handleGenerate() {
     if (!project?.outputPath) {
@@ -199,15 +199,20 @@ export default function ModuleDetail({ moduleId, onEdit, onDelete }: Props) {
                       <span className={`h-2 w-2 rounded-full ${op.enabled ? "bg-emerald-500" : "bg-zinc-700"}`} />
                       <span className="text-sm text-zinc-200">{OPERATION_LABELS[op.type]}</span>
                     </div>
-                    <div className="flex gap-1.5">
-                      {op.roles.length === 0 ? (
+                    <div className="flex gap-1.5 flex-wrap">
+                      {(!op.rules || op.rules.length === 0) ? (
                         <span className="text-xs text-zinc-600">no roles</span>
                       ) : (
-                        op.roles.map((role) => (
-                          <span key={role} className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-                            {role}
-                          </span>
-                        ))
+                        op.rules.flatMap((rule) =>
+                          rule.roles.map((role) => (
+                            <span key={`${rule.scope}-${role}`} className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
+                              {role}
+                              {rule.scope !== "all" && (
+                                <span className="text-zinc-600 ml-1">·{rule.scope}</span>
+                              )}
+                            </span>
+                          ))
+                        )
                       )}
                     </div>
                   </div>

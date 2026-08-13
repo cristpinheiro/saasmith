@@ -51,7 +51,7 @@ export default function Header({ onOpenSettings, onToggleChat, showChat, showDia
     try {
       for (let i = 0; i < project.modules.length; i++) {
         setGenCurrent(i + 1)
-        await generateModule(project.modules[i], project.outputPath)
+        await generateModule(project.modules[i], project.outputPath, project)
       }
       await generateProjectFiles(project, project.outputPath)
       setGenDone(project.modules.length)
@@ -105,7 +105,7 @@ export default function Header({ onOpenSettings, onToggleChat, showChat, showDia
       const total = project.modules.length + 2
       for (let i = 0; i < project.modules.length; i++) {
         setAllStep(`Backend ${i + 1}/${total}`)
-        await generateModule(project.modules[i], project.outputPath)
+        await generateModule(project.modules[i], project.outputPath, project)
       }
       setAllStep(`Backend ${project.modules.length + 1}/${total}`)
       await generateProjectFiles(project, project.outputPath)

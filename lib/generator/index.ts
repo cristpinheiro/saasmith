@@ -53,25 +53,25 @@ type GeneratedFile = {
   content: string
 }
 
-export function getGeneratedFiles(mod: Module, outputPath: string): GeneratedFile[] {
+export function getGeneratedFiles(mod: Module, outputPath: string, project?: Project): GeneratedFile[] {
   const lower = mod.name.toLowerCase()
   const backendBase = `${outputPath}/backend/src`
   const frontendBase = `${outputPath}/frontend/src/api`
 
   return [
     { path: `${backendBase}/schema/${lower}.schema.ts`, content: generateSchema(mod) },
-    { path: `${backendBase}/repositories/${lower}.repository.ts`, content: generateRepository(mod) },
-    { path: `${backendBase}/services/${lower}.service.ts`, content: generateService(mod) },
-    { path: `${backendBase}/routes/${lower}.routes.ts`, content: generateController(mod) },
+    { path: `${backendBase}/repositories/${lower}.repository.ts`, content: generateRepository(mod, project) },
+    { path: `${backendBase}/services/${lower}.service.ts`, content: generateService(mod, project) },
+    { path: `${backendBase}/routes/${lower}.routes.ts`, content: generateController(mod, project) },
     { path: `${backendBase}/migrations/create_${mod.tableName}.sql`, content: generateMigration(mod) },
     { path: `${frontendBase}/${lower}.types.ts`, content: generateFrontendTypes(mod) },
     { path: `${frontendBase}/${lower}.api.ts`, content: generateApiClient(mod) },
   ]
 }
 
-export async function generateModule(mod: Module, outputPath: string): Promise<string[]> {
+export async function generateModule(mod: Module, outputPath: string, project?: Project): Promise<string[]> {
   const { invoke } = await import("@tauri-apps/api/core")
-  const files = getGeneratedFiles(mod, outputPath)
+  const files = getGeneratedFiles(mod, outputPath, project)
 
   for (const file of files) {
     await invoke("write_project", { path: file.path, content: file.content })

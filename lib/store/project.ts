@@ -13,6 +13,7 @@ type ProjectStore = {
   newProject: (name: string, roles?: Role[], modules?: Module[]) => void
 
   setOutputPath: () => Promise<void>
+  setTenantModule: (name?: string) => void
 
   addModule: (module: Module) => void
   updateModule: (module: Module) => void
@@ -21,6 +22,23 @@ type ProjectStore = {
   addRole: (role: Role) => void
   updateRole: (role: Role) => void
   removeRole: (roleId: string) => void
+}
+
+function migrateProject(raw: any): Project {
+  return {
+    ...raw,
+    modules: (raw.modules ?? []).map((mod: any) => ({
+      ...mod,
+      operations: (mod.operations ?? []).map((op: any) => {
+        if (op.rules) return op
+        const { roles: _r, ...rest } = op
+        return {
+          ...rest,
+          rules: op.roles?.length > 0 ? [{ roles: op.roles, scope: "all" }] : [],
+        }
+      }),
+    })),
+  }
 }
 
 async function getTauriApis() {
@@ -58,7 +76,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     })
     if (!path) return
     const content = await invoke<string>("read_project", { path })
-    const project: Project = JSON.parse(content)
+    const project: Project = migrateProject(JSON.parse(content))
     set({ project, projectPath: path as string, isDirty: false })
   },
 
@@ -104,6 +122,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await invoke("write_project", { path: configPath, content: JSON.stringify(updatedProject, null, 2) })
     set({ project: updatedProject, projectPath: configPath, isDirty: false })
   },
+
+  setTenantModule: (name) =>
+    set((s) => ({
+      project: s.project ? { ...s.project, tenantModule: name } : null,
+      isDirty: true,
+    })),
 
   addModule: (module) =>
     set((s) => ({

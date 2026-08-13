@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import type { Field, FieldType, Module, Operation, OperationType } from "../lib/types"
+import type { Field, FieldType, Module, Operation, OperationScope, OperationType } from "../lib/types"
 import { useProjectStore } from "../lib/store/project"
 
 const SIMPLE_TYPES = [
@@ -66,7 +66,13 @@ export default function CreateModuleModal({ onClose, initialModule }: Props) {
   // Step 3
   const [operations, setOperations] = useState<Operation[]>(
     initialModule?.operations ??
-    ALL_OPERATIONS.map((type) => ({ type, enabled: true, roles: roles.map((r) => r.name) }))
+    ALL_OPERATIONS.map((type) => ({
+      type,
+      enabled: true,
+      rules: roles.length > 0
+        ? [{ roles: roles.map((r) => r.name), scope: "all" as OperationScope }]
+        : [],
+    }))
   )
 
   function handleNameChange(val: string) {
@@ -106,18 +112,56 @@ export default function CreateModuleModal({ onClose, initialModule }: Props) {
     )
   }
 
-  function toggleRole(opType: OperationType, roleName: string) {
+  function getRoleScope(op: Operation, roleName: string): OperationScope | null {
+    for (const rule of op.rules) {
+      if (rule.roles.includes(roleName)) return rule.scope
+    }
+    return null
+  }
+
+  function toggleRoleInOp(opType: OperationType, roleName: string) {
     setOperations((prev) =>
-      prev.map((op) =>
-        op.type === opType
-          ? {
-              ...op,
-              roles: op.roles.includes(roleName)
-                ? op.roles.filter((r) => r !== roleName)
-                : [...op.roles, roleName],
-            }
-          : op
-      )
+      prev.map((op) => {
+        if (op.type !== opType) return op
+        const isEnabled = op.rules.some((r) => r.roles.includes(roleName))
+        if (isEnabled) {
+          const newRules = op.rules
+            .map((r) => ({ ...r, roles: r.roles.filter((ro) => ro !== roleName) }))
+            .filter((r) => r.roles.length > 0)
+          return { ...op, rules: newRules }
+        }
+        const allRule = op.rules.find((r) => r.scope === "all")
+        if (allRule) {
+          return {
+            ...op,
+            rules: op.rules.map((r) =>
+              r.scope === "all" ? { ...r, roles: [...r.roles, roleName] } : r
+            ),
+          }
+        }
+        return { ...op, rules: [...op.rules, { roles: [roleName], scope: "all" as OperationScope }] }
+      })
+    )
+  }
+
+  function setRoleScopeInOp(opType: OperationType, roleName: string, scope: OperationScope) {
+    setOperations((prev) =>
+      prev.map((op) => {
+        if (op.type !== opType) return op
+        const rulesWithout = op.rules
+          .map((r) => ({ ...r, roles: r.roles.filter((ro) => ro !== roleName) }))
+          .filter((r) => r.roles.length > 0)
+        const targetRule = rulesWithout.find((r) => r.scope === scope)
+        if (targetRule) {
+          return {
+            ...op,
+            rules: rulesWithout.map((r) =>
+              r.scope === scope ? { ...r, roles: [...r.roles, roleName] } : r
+            ),
+          }
+        }
+        return { ...op, rules: [...rulesWithout, { roles: [roleName], scope }] }
+      })
     )
   }
 
@@ -330,32 +374,61 @@ export default function CreateModuleModal({ onClose, initialModule }: Props) {
 
           {step === "operations" && (
             <div className="flex flex-col gap-2">
+              {roles.length > 0 && (
+                <p className="text-xs text-zinc-600 mb-1">
+                  For each enabled role, pick a scope:
+                  <span className="text-zinc-500 ml-1">all</span> = no filter,
+                  <span className="text-zinc-500 ml-1">tenant</span> = scoped to user&apos;s tenant,
+                  <span className="text-zinc-500 ml-1">own</span> = scoped to user&apos;s id
+                </p>
+              )}
               {operations.map((op) => (
                 <div key={op.type} className="rounded-lg border border-zinc-800 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={op.enabled}
-                        onChange={() => toggleOperation(op.type)}
-                        className="accent-indigo-500"
-                      />
-                      <span className="text-sm text-zinc-200">{OPERATION_LABELS[op.type]}</span>
-                    </label>
-                  </div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={op.enabled}
+                      onChange={() => toggleOperation(op.type)}
+                      className="accent-indigo-500"
+                    />
+                    <span className="text-sm text-zinc-200">{OPERATION_LABELS[op.type]}</span>
+                  </label>
                   {op.enabled && roles.length > 0 && (
-                    <div className="mt-2.5 flex flex-wrap gap-2 pl-6">
-                      {roles.map((role) => (
-                        <label key={role.id} className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={op.roles.includes(role.name)}
-                            onChange={() => toggleRole(op.type, role.name)}
-                            className="accent-indigo-500"
-                          />
-                          <span className="text-xs text-zinc-400">{role.name}</span>
-                        </label>
-                      ))}
+                    <div className="mt-3 pl-6 flex flex-col gap-2">
+                      {roles.map((role) => {
+                        const scope = getRoleScope(op, role.name)
+                        return (
+                          <div key={role.id} className="flex items-center gap-3">
+                            <label className="flex items-center gap-2 cursor-pointer w-24 shrink-0">
+                              <input
+                                type="checkbox"
+                                checked={scope !== null}
+                                onChange={() => toggleRoleInOp(op.type, role.name)}
+                                className="accent-indigo-500"
+                              />
+                              <span className="text-xs text-zinc-400 truncate">{role.name}</span>
+                            </label>
+                            {scope !== null && (
+                              <div className="flex gap-1">
+                                {(["all", "tenant", "own"] as OperationScope[]).map((s) => (
+                                  <button
+                                    key={s}
+                                    type="button"
+                                    onClick={() => setRoleScopeInOp(op.type, role.name, s)}
+                                    className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                                      scope === s
+                                        ? "bg-indigo-600 text-white"
+                                        : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                                    }`}
+                                  >
+                                    {s}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>

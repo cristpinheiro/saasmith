@@ -130,11 +130,14 @@ function parseAnthropicResponse(response: AnthropicResponse): AiResult {
           })
         ),
         operations: (input.operations ?? []).map(
-          (o): Operation => ({
-            type: o.type as Operation["type"],
-            enabled: o.enabled,
-            roles: o.roles ?? [],
-          })
+          (o): Operation => {
+            const raw = o as any
+            return {
+              type: o.type as Operation["type"],
+              enabled: o.enabled,
+              rules: raw.rules ?? (o.roles?.length > 0 ? [{ roles: o.roles, scope: "all" as const }] : []),
+            }
+          }
         ),
       } satisfies Omit<Module, "id">
     })
@@ -308,11 +311,14 @@ function parseSetupResponse(response: AnthropicResponse): SetupResult {
         nullable: f.nullable ?? false,
         unique: f.unique ?? false,
       })),
-      operations: (m.operations ?? []).map((o): Operation => ({
-        type: o.type as Operation["type"],
-        enabled: o.enabled,
-        roles: o.roles ?? [],
-      })),
+      operations: (m.operations ?? []).map((o): Operation => {
+        const raw = o as any
+        return {
+          type: o.type as Operation["type"],
+          enabled: o.enabled,
+          rules: raw.rules ?? (o.roles?.length > 0 ? [{ roles: o.roles, scope: "all" as const }] : []),
+        }
+      }),
     }))
 
     return {

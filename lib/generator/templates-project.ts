@@ -95,6 +95,13 @@ import jwt from "@fastify/jwt"
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify"
 import "dotenv/config"
 
+declare module "@fastify/jwt" {
+  interface FastifyJWT {
+    payload: { id: string; email: string; role: string; tenantId?: string }
+    user: { id: string; email: string; role: string; tenantId?: string }
+  }
+}
+
 declare module "fastify" {
   interface FastifyInstance {
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>
@@ -159,6 +166,7 @@ export const usersTable = pgTable("users", {
   email: varchar({ length: 255 }).notNull().unique(),
   password: varchar({ length: 255 }).notNull(),
   role: varchar({ length: 100 }).notNull().default("user"),
+  tenantId: uuid("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 })
@@ -169,7 +177,6 @@ export type NewUser = typeof usersTable.$inferInsert
 }
 
 export function generateUserMigration(): string {
-  const ts = new Date().toISOString().replace(/[-T:.Z]/g, "").slice(0, 14)
   return `-- Migration: create_users
 -- Generated: ${new Date().toISOString()}
 
@@ -178,6 +185,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) NOT NULL UNIQUE,
   password VARCHAR(255) NOT NULL,
   role VARCHAR(100) NOT NULL DEFAULT 'user',
+  tenant_id UUID,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -206,7 +214,13 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   app.get("/me", { preHandler: [app.authenticate] }, async (req, reply) => {
-    return reply.send((req as any).user)
+    return reply.send(req.user)
+  })
+
+  app.patch("/tenant", { preHandler: [app.authenticate] }, async (req, reply) => {
+    const { tenantId } = req.body as { tenantId: string }
+    await authService.setTenant(req.user.id, tenantId)
+    return reply.send({ ok: true })
   })
 }
 `
@@ -234,8 +248,18 @@ export class AuthService {
     if (!user) return null
     const valid = await bcrypt.compare(password, user.password)
     if (!valid) return null
-    const token = app.jwt.sign({ id: user.id, email: user.email, role: user.role }, { expiresIn: "7d" })
-    return { token, user: { id: user.id, email: user.email, role: user.role } }
+    const payload = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      ...(user.tenantId ? { tenantId: user.tenantId } : {}),
+    }
+    const token = app.jwt.sign(payload, { expiresIn: "7d" })
+    return { token, user: payload }
+  }
+
+  async setTenant(userId: string, tenantId: string) {
+    await db.update(usersTable).set({ tenantId }).where(eq(usersTable.id, userId))
   }
 }
 

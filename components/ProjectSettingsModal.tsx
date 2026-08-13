@@ -10,7 +10,7 @@ type Props = {
 }
 
 export default function ProjectSettingsModal({ onClose }: Props) {
-  const { project, addRole, updateRole, removeRole } = useProjectStore()
+  const { project, addRole, updateRole, removeRole, setTenantModule } = useProjectStore()
   const { apiKey, setApiKey, baseUrl, setBaseUrl, authToken, setAuthToken, model, setModel } = useSettingsStore()
   const [newRoleName, setNewRoleName] = useState("")
   const [apiKeyInput, setApiKeyInput] = useState(apiKey)
@@ -132,6 +132,24 @@ export default function ProjectSettingsModal({ onClose }: Props) {
             </div>
             <p className="mt-1.5 text-xs text-zinc-600">
               Model name expected by your proxy. Leave blank for claude-opus-5.
+            </p>
+          </div>
+
+          {/* Tenant Module */}
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Tenant Module</h3>
+            <select
+              value={project.tenantModule ?? ""}
+              onChange={(e) => setTenantModule(e.target.value || undefined)}
+              className="w-full rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+            >
+              <option value="">— None (single-tenant) —</option>
+              {project.modules.map((m) => (
+                <option key={m.id} value={m.name}>{m.name}</option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-zinc-600">
+              Module whose creation links the user to a tenant. Sets user.tenantId on record create.
             </p>
           </div>
 
