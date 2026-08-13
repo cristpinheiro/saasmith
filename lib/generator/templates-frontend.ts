@@ -20,7 +20,11 @@ function enabledOps(mod: Module): string[] {
   return mod.operations.filter((o) => o.enabled).map((o) => o.type)
 }
 
-function fieldToInputJsx(field: Field, valueExpr?: string): string {
+function isRelationType(t: FieldType): t is { kind: "relation"; module: string; cardinality: "one" | "many" } {
+  return typeof t === "object" && "kind" in t && t.kind === "relation"
+}
+
+function fieldToInputJsx(field: Field, valueExpr?: string, optionsVar?: string): string {
   const isRelation = typeof field.type === "object" && field.type.kind === "relation"
   const n = isRelation ? `${field.name}Id` : field.name
   const label = fieldLabel(field)
@@ -62,8 +66,20 @@ function fieldToInputJsx(field: Field, valueExpr?: string): string {
   }
 
   if (field.type.kind === "relation") {
+    if (optionsVar) {
+      return wrap(
+        `          <select id="${n}" name="${n}"${valueExpr ? ` defaultValue={${valueExpr}}` : ""} className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">Selecionar…</option>
+            {${optionsVar}?.map((o) => (
+              <option key={o.id} value={o.id}>
+                {String((o as any).name ?? (o as any).title ?? (o as any).email ?? o.id)}
+              </option>
+            ))}
+          </select>`
+      )
+    }
     return wrap(
-      `          <input type="text" id="${n}" name="${n}"${dv} placeholder="UUID" className="w-full rounded border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />`
+      `          <input type="text" id="${n}" name="${n}"${valueExpr ? ` defaultValue={${valueExpr}}` : ""} placeholder="UUID" className="w-full rounded border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />`
     )
   }
 
@@ -568,6 +584,29 @@ export function generateModuleListPage(mod: Module): string {
   const lower = mod.name.toLowerCase()
   const ops = enabledOps(mod)
   const fields = domainFields(mod)
+  const relFields = fields.filter((f) => isRelationType(f.type))
+
+  const relationImports = relFields
+    .map((f) => {
+      const ft = f.type as { kind: "relation"; module: string }
+      const relLower = ft.module.toLowerCase()
+      const relName = capitalize(ft.module)
+      return `import type { ${relName} } from "@/api/${relLower}.types"`
+    })
+    .join("\n")
+
+  const relationFetches = relFields
+    .map((f) => {
+      const ft = f.type as { kind: "relation"; module: string }
+      const relLower = ft.module.toLowerCase()
+      const relName = capitalize(ft.module)
+      return `  const ${f.name}Options = await apiFetch<${relName}[]>("/api/${relLower}").catch(() => [])`
+    })
+    .join("\n")
+
+  const optionPropSpread = relFields.length > 0
+    ? " " + relFields.map((f) => `${f.name}Options={${f.name}Options}`).join(" ")
+    : ""
 
   const parsers = fields
     .map((f) => `      ${typeof f.type === "object" && f.type.kind === "relation" ? `${f.name}Id` : f.name}: ${fieldToFormDataParser(f)},`)
@@ -631,7 +670,7 @@ ${parsers}
               <h2 className="text-lg font-semibold text-gray-900">Novo ${name}</h2>
               <Link href="/dashboard/${lower}" className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</Link>
             </div>
-            <${name}Form action={create${name}} submitLabel="Criar ${name}" />
+            <${name}Form action={create${name}} submitLabel="Criar ${name}"${optionPropSpread} />
           </div>
         </div>
       )}` : ""
@@ -645,7 +684,7 @@ ${parsers}
               <h2 className="text-lg font-semibold text-gray-900">Editar ${name}</h2>
               <Link href="/dashboard/${lower}" className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</Link>
             </div>
-            <${name}Form action={update${name}} defaultValues={editingItem} submitLabel="Salvar alterações" />
+            <${name}Form action={update${name}} defaultValues={editingItem} submitLabel="Salvar alterações"${optionPropSpread} />
           </div>
         </div>
       )}` : ""
@@ -672,11 +711,13 @@ ${parsers}
     ? `\nimport ${name}Form from "@/components/${name}Form"`
     : ""
 
+  const relImports = relationImports ? `\n${relationImports}` : ""
+
   return `import Link from "next/link"
 import { redirect } from "next/navigation"
 import { revalidatePath } from "next/cache"
 import { apiFetch } from "@/lib/fetch"
-import type { ${name} } from "@/api/${lower}.types"${formImport}
+import type { ${name} } from "@/api/${lower}.types"${formImport}${relImports}
 
 export default async function ${name}ListPage({
   searchParams,
@@ -685,7 +726,7 @@ export default async function ${name}ListPage({
 }) {
   const params = await searchParams
   const items = await apiFetch<${name}[]>("/api/${lower}")${editingItemFetch}
-${createAction}${updateAction}${deleteAction}
+${relationFetches ? relationFetches + "\n" : ""}${createAction}${updateAction}${deleteAction}
   return (
     <>
       <div className="space-y-6">
@@ -791,28 +832,38 @@ export function generateModuleFormComponent(mod: Module): string {
   const name = capitalize(mod.name)
   const lower = mod.name.toLowerCase()
   const fields = domainFields(mod)
+  const relFields = fields.filter((f) => isRelationType(f.type))
 
   const inputs = fields
     .map((f) => {
-      const isRelation = typeof f.type === "object" && f.type.kind === "relation"
+      const isRel = isRelationType(f.type)
       const isBool = typeof f.type === "string" && f.type === "boolean"
-      const key = isRelation ? `${f.name}Id` : f.name
+      const key = isRel ? `${f.name}Id` : f.name
       const ve = isBool
         ? `defaultValues?.${key} ?? false`
         : `defaultValues?.${key} !== undefined ? String(defaultValues.${key}) : undefined`
-      return fieldToInputJsx(f, ve)
+      return fieldToInputJsx(f, ve, isRel ? `${f.name}Options` : undefined)
     })
     .join("\n")
+
+  const propLines = [
+    `  action: (formData: FormData) => Promise<void> | void`,
+    `  defaultValues?: Partial<${name}>`,
+    `  submitLabel?: string`,
+    ...relFields.map((f) => `  ${f.name}Options?: { id: string; [key: string]: unknown }[]`),
+  ].join("\n")
+
+  const extraDestructure = relFields.length > 0
+    ? `, ${relFields.map((f) => `${f.name}Options`).join(", ")}`
+    : ""
 
   return `import type { ${name} } from "@/api/${lower}.types"
 
 type Props = {
-  action: (formData: FormData) => Promise<void> | void
-  defaultValues?: Partial<${name}>
-  submitLabel?: string
+${propLines}
 }
 
-export default function ${name}Form({ action, defaultValues, submitLabel = "Salvar" }: Props) {
+export default function ${name}Form({ action, defaultValues, submitLabel = "Salvar"${extraDestructure} }: Props) {
   return (
     <form action={action} className="space-y-4 w-full">
 ${inputs}
