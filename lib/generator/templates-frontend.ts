@@ -31,7 +31,7 @@ function fieldToInputJsx(field: Field, valueExpr?: string): string {
         </div>`
       case "integer":
       case "float":
-        return wrap(`          <input type="number" id="${n}" name="${n}"${dv} step="${field.type === "float" ? "0.01" : "1"} ${base} />`)
+        return wrap(`          <input type="number" id="${n}" name="${n}"${dv} step="${field.type === "float" ? "0.01" : "1"}" ${base} />`)
       case "date":
         return wrap(`          <input type="date" id="${n}" name="${n}"${dv} ${base} />`)
       case "datetime":
