@@ -59,14 +59,13 @@ export function getGeneratedFiles(mod: Module, outputPath: string): GeneratedFil
   const lower = mod.name.toLowerCase()
   const backendBase = `${outputPath}/backend/src`
   const frontendBase = `${outputPath}/frontend/src/api`
-  const ts = new Date().toISOString().replace(/[-T:.Z]/g, "").slice(0, 14)
 
   return [
     { path: `${backendBase}/schema/${lower}.schema.ts`, content: generateSchema(mod) },
     { path: `${backendBase}/repositories/${lower}.repository.ts`, content: generateRepository(mod) },
     { path: `${backendBase}/services/${lower}.service.ts`, content: generateService(mod) },
     { path: `${backendBase}/routes/${lower}.routes.ts`, content: generateController(mod) },
-    { path: `${backendBase}/migrations/${ts}_create_${mod.tableName}.sql`, content: generateMigration(mod) },
+    { path: `${backendBase}/migrations/create_${mod.tableName}.sql`, content: generateMigration(mod) },
     { path: `${frontendBase}/${lower}.types.ts`, content: generateFrontendTypes(mod) },
     { path: `${frontendBase}/${lower}.api.ts`, content: generateApiClient(mod) },
   ]
@@ -86,7 +85,6 @@ export async function generateModule(mod: Module, outputPath: string): Promise<s
 export async function generateProjectFiles(project: Project, outputPath: string): Promise<string[]> {
   const { invoke } = await import("@tauri-apps/api/core")
   const b = `${outputPath}/backend`
-  const ts = new Date().toISOString().replace(/[-T:.Z]/g, "").slice(0, 14)
 
   const files: { path: string; content: string }[] = [
     // README
@@ -101,7 +99,7 @@ export async function generateProjectFiles(project: Project, outputPath: string)
     { path: `${b}/src/plugins/auth.plugin.ts`, content: generateAuthPlugin() },
     // Auth module
     { path: `${b}/src/schema/user.schema.ts`, content: generateUserSchema() },
-    { path: `${b}/src/migrations/${ts}_create_users.sql`, content: generateUserMigration() },
+    { path: `${b}/src/migrations/create_users.sql`, content: generateUserMigration() },
     { path: `${b}/src/routes/auth.routes.ts`, content: generateAuthRoutes(project.roles) },
     { path: `${b}/src/services/auth.service.ts`, content: generateAuthService() },
     { path: `${b}/src/migrate.ts`, content: generateMigrateScript() },
