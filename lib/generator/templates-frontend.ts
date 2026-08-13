@@ -10,6 +10,12 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+function fieldLabel(field: Field): string {
+  const isRelation = typeof field.type === "object" && field.type.kind === "relation"
+  const base = isRelation ? field.name : field.name
+  return base.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase()).trim()
+}
+
 function enabledOps(mod: Module): string[] {
   return mod.operations.filter((o) => o.enabled).map((o) => o.type)
 }
@@ -17,7 +23,7 @@ function enabledOps(mod: Module): string[] {
 function fieldToInputJsx(field: Field, valueExpr?: string): string {
   const isRelation = typeof field.type === "object" && field.type.kind === "relation"
   const n = isRelation ? `${field.name}Id` : field.name
-  const label = capitalize(n)
+  const label = fieldLabel(field)
   const dv = valueExpr ? ` defaultValue={${valueExpr}}` : ""
   const base = `className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"`
   const wrap = (inner: string) =>
@@ -564,7 +570,7 @@ export function generateModuleListPage(mod: Module): string {
 
   const thCells = fields
     .map((f) => {
-      const label = typeof f.type === "object" && f.type.kind === "relation" ? capitalize(`${f.name}Id`) : capitalize(f.name)
+      const label = fieldLabel(f)
       return `              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${label}</th>`
     })
     .join("\n")
@@ -734,7 +740,7 @@ export function generateModuleDetailPage(mod: Module): string {
     .join("\n")
 
   const editLink = ops.includes("update")
-    ? `\n          <Link href={\`/dashboard/${lower}/\${item.id}/edit\`} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">Editar</Link>`
+    ? `\n          <Link href={\`/dashboard/${lower}?edit=\${item.id}\`} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">Editar</Link>`
     : ""
 
   return `import Link from "next/link"
@@ -803,7 +809,7 @@ type Props = {
 
 export default function ${name}Form({ action, defaultValues, submitLabel = "Salvar" }: Props) {
   return (
-    <form action={action} className="space-y-4 max-w-lg">
+    <form action={action} className="space-y-4 w-full">
 ${inputs}
       <button
         type="submit"

@@ -46,8 +46,6 @@ import {
   generateModuleListPage,
   generateModuleDetailPage,
   generateModuleFormComponent,
-  generateModuleNewPage,
-  generateModuleEditPage,
 } from "./templates-frontend"
 
 type GeneratedFile = {
