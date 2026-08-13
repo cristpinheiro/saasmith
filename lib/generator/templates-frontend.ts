@@ -607,32 +607,35 @@ ${parsers}
     revalidatePath("/dashboard/${lower}")
   }` : ""
 
-  const newButton = ops.includes("create") ? `
-        {!params.action && !params.edit && (
-          <Link href="?action=new" className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">
-            Novo ${name}
-          </Link>
-        )}` : ""
+  const newButton = ops.includes("create")
+    ? `<Link href="?action=new" className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">Novo ${name}</Link>`
+    : ""
 
-  const newCard = ops.includes("create") ? `
+  const newModal = ops.includes("create") ? `
       {params.action === "new" && (
-        <div className="rounded-lg border border-gray-200 bg-white shadow-sm p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Novo ${name}</h2>
-            <Link href="/dashboard/${lower}" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">✕ Fechar</Link>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <Link href="/dashboard/${lower}" className="absolute inset-0 bg-black/50" aria-label="Fechar" />
+          <div className="relative z-10 w-full max-w-lg bg-white rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-semibold text-gray-900">Novo ${name}</h2>
+              <Link href="/dashboard/${lower}" className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</Link>
+            </div>
+            <${name}Form action={create${name}} submitLabel="Criar ${name}" />
           </div>
-          <${name}Form action={create${name}} submitLabel="Criar ${name}" />
         </div>
       )}` : ""
 
-  const editCard = ops.includes("update") ? `
+  const editModal = ops.includes("update") ? `
       {editingItem && (
-        <div className="rounded-lg border border-gray-200 bg-white shadow-sm p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Editar ${name}</h2>
-            <Link href="/dashboard/${lower}" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">✕ Fechar</Link>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <Link href="/dashboard/${lower}" className="absolute inset-0 bg-black/50" aria-label="Fechar" />
+          <div className="relative z-10 w-full max-w-lg bg-white rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-semibold text-gray-900">Editar ${name}</h2>
+              <Link href="/dashboard/${lower}" className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</Link>
+            </div>
+            <${name}Form action={update${name}} defaultValues={editingItem} submitLabel="Salvar alterações" />
           </div>
-          <${name}Form action={update${name}} defaultValues={editingItem} submitLabel="Salvar alterações" />
         </div>
       )}` : ""
 
@@ -673,39 +676,42 @@ export default async function ${name}ListPage({
   const items = await apiFetch<${name}[]>("/api/${lower}")${editingItemFetch}
 ${createAction}${updateAction}${deleteAction}
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">${newButton}
-        <h1 className="text-2xl font-bold text-gray-900">${name}s</h1>
-      </div>${newCard}${editCard}
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-${thCells}
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {items.map((item) => (
-              <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-${tdCells}
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">${detailLink}${editLink}${deleteButton}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {items.length === 0 && (
+    <>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-gray-900">${name}s</h1>
+          ${newButton}
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <td colSpan={${fields.length + 1}} className="px-4 py-8 text-center text-sm text-gray-500">
-                  Nenhum registro encontrado.
-                </td>
+${thCells}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {items.map((item) => (
+                <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+${tdCells}
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">${detailLink}${editLink}${deleteButton}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 && (
+                <tr>
+                  <td colSpan={${fields.length + 1}} className="px-4 py-8 text-center text-sm text-gray-500">
+                    Nenhum registro encontrado.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>${newModal}${editModal}
+    </>
   )
 }
 `
