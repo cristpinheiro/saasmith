@@ -14,37 +14,42 @@ function camelToSnake(s: string): string {
   return s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
 }
 
-function drizzleType(type: FieldType): string {
+function drizzleType(type: FieldType, col?: string): string {
+  const c = col ? `"${col}"` : ""
   if (typeof type === "string") {
     switch (type) {
-      case "string": return "varchar({ length: 255 })"
-      case "text": return "text()"
-      case "integer": return "integer()"
-      case "float": return "doublePrecision()"
-      case "boolean": return "boolean()"
-      case "date": return "date()"
-      case "datetime": return "timestamp()"
-      case "uuid": return "uuid()"
-      case "json": return "jsonb()"
+      case "string":   return col ? `varchar(${c}, { length: 255 })` : `varchar({ length: 255 })`
+      case "text":     return `text(${c})`
+      case "integer":  return `integer(${c})`
+      case "float":    return `doublePrecision(${c})`
+      case "boolean":  return `boolean(${c})`
+      case "date":     return `date(${c})`
+      case "datetime": return `timestamp(${c})`
+      case "uuid":     return `uuid(${c})`
+      case "json":     return `jsonb(${c})`
     }
   }
-  if (type.kind === "enum") return `varchar({ length: 100 })`
-  if (type.kind === "relation") return `uuid()`
-  return "text()"
+  if (type.kind === "enum") return col ? `varchar(${c}, { length: 100 })` : `varchar({ length: 100 })`
+  if (type.kind === "relation") return `uuid(${c})`
+  return `text(${c})`
 }
 
 function fieldToColumn(field: Field): string {
+  const snakeCol = camelToSnake(field.name)
+
   if (typeof field.type === "object" && field.type.kind === "relation") {
-    const colName = camelToSnake(field.name) + "_id"
-    let s = `  ${field.name}Id: uuid("${colName}")`
+    const colName = snakeCol + "_id"
+    let s = `  ${field.name}Id: ${drizzleType(field.type, colName)}`
     if (!field.nullable) s += `.notNull()`
     return s
   }
-  const col = drizzleType(field.type)
-  const parts: string[] = [`  ${field.name}: ${col}`]
-  if (!field.nullable) parts[0] += `.notNull()`
-  if (field.unique) parts[0] += `.unique()`
-  return parts[0]
+
+  // Always map camelCase field names to snake_case columns so PostgreSQL and Drizzle agree
+  const explicitCol = snakeCol !== field.name ? snakeCol : undefined
+  let s = `  ${field.name}: ${drizzleType(field.type, explicitCol)}`
+  if (!field.nullable) s += `.notNull()`
+  if (field.unique) s += `.unique()`
+  return s
 }
 
 export function generateSchema(mod: Module): string {
@@ -277,7 +282,7 @@ export function generateMigration(mod: Module): string {
     `  id UUID PRIMARY KEY DEFAULT gen_random_uuid()`,
     ...domainFields(mod).map((f) => {
       let sqlType = "TEXT"
-      let colName = f.name
+      let colName = camelToSnake(f.name)
       if (typeof f.type === "string") {
         switch (f.type) {
           case "string": sqlType = "VARCHAR(255)"; break
