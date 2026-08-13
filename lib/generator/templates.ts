@@ -10,6 +10,10 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+function camelToSnake(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+}
+
 function drizzleType(type: FieldType): string {
   if (typeof type === "string") {
     switch (type) {
@@ -30,6 +34,12 @@ function drizzleType(type: FieldType): string {
 }
 
 function fieldToColumn(field: Field): string {
+  if (typeof field.type === "object" && field.type.kind === "relation") {
+    const colName = camelToSnake(field.name) + "_id"
+    let s = `  ${field.name}Id: uuid("${colName}")`
+    if (!field.nullable) s += `.notNull()`
+    return s
+  }
   const col = drizzleType(field.type)
   const parts: string[] = [`  ${field.name}: ${col}`]
   if (!field.nullable) parts[0] += `.notNull()`
@@ -284,7 +294,7 @@ export function generateMigration(mod: Module): string {
         sqlType = "VARCHAR(100)"
       } else {
         sqlType = "UUID"
-        colName = `${f.name}Id`
+        colName = camelToSnake(f.name) + "_id"
       }
       const notNull = !f.nullable ? " NOT NULL" : ""
       const unique = f.unique ? " UNIQUE" : ""
@@ -312,6 +322,7 @@ export function generateFrontendTypes(mod: Module): string {
 
   const fields = domainFields(mod).map((f) => {
     let tsType = "string"
+    let fieldName = f.name
     if (typeof f.type === "string") {
       switch (f.type) {
         case "integer":
@@ -324,8 +335,9 @@ export function generateFrontendTypes(mod: Module): string {
       tsType = f.type.values.map((v) => `"${v}"`).join(" | ")
     } else {
       tsType = "string"
+      fieldName = `${f.name}Id`
     }
-    return `  ${f.name}${f.nullable ? "?" : ""}: ${tsType}`
+    return `  ${fieldName}${f.nullable ? "?" : ""}: ${tsType}`
   })
 
   return `export type ${name} = {
