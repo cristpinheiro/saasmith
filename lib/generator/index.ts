@@ -148,8 +148,6 @@ export async function generateFrontendFiles(project: Project, outputPath: string
     const base = `${s}/app/dashboard/${lower}`
     if (ops.includes("readMany")) files.push({ path: `${base}/page.tsx`, content: generateModuleListPage(mod) })
     if (ops.includes("readOne"))  files.push({ path: `${base}/[id]/page.tsx`, content: generateModuleDetailPage(mod) })
-    if (ops.includes("create"))   files.push({ path: `${base}/new/page.tsx`, content: generateModuleNewPage(mod) })
-    if (ops.includes("update"))   files.push({ path: `${base}/[id]/edit/page.tsx`, content: generateModuleEditPage(mod) })
     if (ops.includes("create") || ops.includes("update"))
       files.push({ path: `${s}/components/${Name}Form.tsx`, content: generateModuleFormComponent(mod) })
   }

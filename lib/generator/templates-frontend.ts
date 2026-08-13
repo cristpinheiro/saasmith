@@ -558,64 +558,125 @@ export function generateModuleListPage(mod: Module): string {
   const ops = enabledOps(mod)
   const fields = domainFields(mod)
 
+  const parsers = fields
+    .map((f) => `      ${typeof f.type === "object" && f.type.kind === "relation" ? `${f.name}Id` : f.name}: ${fieldToFormDataParser(f)},`)
+    .join("\n")
+
   const thCells = fields
-    .map((f) => `              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${capitalize(f.name)}</th>`)
+    .map((f) => {
+      const label = typeof f.type === "object" && f.type.kind === "relation" ? capitalize(`${f.name}Id`) : capitalize(f.name)
+      return `              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${label}</th>`
+    })
     .join("\n")
 
   const tdCells = fields
     .map((f) => `                <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{${fieldToDisplayValue(f)}}</td>`)
     .join("\n")
 
-  const deleteAction = ops.includes("delete")
-    ? `
-          async function delete${name}(formData: FormData) {
-            "use server"
-            const id = formData.get("id") as string
-            await apiFetch(\`/api/${lower}/\${id}\`, { method: "DELETE" })
-            revalidatePath("/dashboard/${lower}")
-          }`
-    : ""
+  const createAction = ops.includes("create") ? `
+  async function create${name}(formData: FormData) {
+    "use server"
+    await apiFetch("/api/${lower}", {
+      method: "POST",
+      body: JSON.stringify({
+${parsers}
+      }),
+    })
+    revalidatePath("/dashboard/${lower}")
+    redirect("/dashboard/${lower}")
+  }` : ""
 
-  const deleteButton = ops.includes("delete")
-    ? `
-                  <form action={delete${name}} className="inline">
-                    <input type="hidden" name="id" value={item.id} />
-                    <button type="submit" className="text-xs text-red-600 hover:text-red-800 hover:underline">Excluir</button>
-                  </form>`
+  const updateAction = ops.includes("update") ? `
+  async function update${name}(formData: FormData) {
+    "use server"
+    await apiFetch(\`/api/${lower}/\${params.edit}\`, {
+      method: "PUT",
+      body: JSON.stringify({
+${parsers}
+      }),
+    })
+    revalidatePath("/dashboard/${lower}")
+    redirect("/dashboard/${lower}")
+  }` : ""
+
+  const deleteAction = ops.includes("delete") ? `
+  async function delete${name}(formData: FormData) {
+    "use server"
+    const id = formData.get("id") as string
+    await apiFetch(\`/api/${lower}/\${id}\`, { method: "DELETE" })
+    revalidatePath("/dashboard/${lower}")
+  }` : ""
+
+  const newButton = ops.includes("create") ? `
+        {!params.action && !params.edit && (
+          <Link href="?action=new" className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">
+            Novo ${name}
+          </Link>
+        )}` : ""
+
+  const newCard = ops.includes("create") ? `
+      {params.action === "new" && (
+        <div className="rounded-lg border border-gray-200 bg-white shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Novo ${name}</h2>
+            <Link href="/dashboard/${lower}" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">✕ Fechar</Link>
+          </div>
+          <${name}Form action={create${name}} submitLabel="Criar ${name}" />
+        </div>
+      )}` : ""
+
+  const editCard = ops.includes("update") ? `
+      {editingItem && (
+        <div className="rounded-lg border border-gray-200 bg-white shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Editar ${name}</h2>
+            <Link href="/dashboard/${lower}" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">✕ Fechar</Link>
+          </div>
+          <${name}Form action={update${name}} defaultValues={editingItem} submitLabel="Salvar alterações" />
+        </div>
+      )}` : ""
+
+  const editLink = ops.includes("update")
+    ? `\n                  <Link href={\`?edit=\${item.id}\`} className="text-xs text-blue-600 hover:underline">Editar</Link>`
     : ""
 
   const detailLink = ops.includes("readOne")
     ? `\n                  <Link href={\`/dashboard/${lower}/\${item.id}\`} className="text-xs text-blue-600 hover:underline">Ver</Link>`
     : ""
 
-  const editLink = ops.includes("update")
-    ? `\n                  <Link href={\`/dashboard/${lower}/\${item.id}/edit\`} className="text-xs text-blue-600 hover:underline">Editar</Link>`
+  const deleteButton = ops.includes("delete") ? `
+                  <form action={delete${name}} className="inline">
+                    <input type="hidden" name="id" value={item.id} />
+                    <button type="submit" className="text-xs text-red-600 hover:text-red-800 hover:underline">Excluir</button>
+                  </form>` : ""
+
+  const editingItemFetch = ops.includes("update")
+    ? `\n  const editingItem = params.edit ? await apiFetch<${name}>(\`/api/${lower}/\${params.edit}\`).catch(() => null) : null`
     : ""
 
-  const newButton = ops.includes("create")
-    ? `
-        <Link
-          href="/dashboard/${lower}/new"
-          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
-        >
-          Novo ${name}
-        </Link>`
+  const formImport = (ops.includes("create") || ops.includes("update"))
+    ? `\nimport ${name}Form from "@/components/${name}Form"`
     : ""
-
-  const revalidateImport = ops.includes("delete") ? `\nimport { revalidatePath } from "next/cache"` : ""
 
   return `import Link from "next/link"
-import { apiFetch } from "@/lib/fetch"${revalidateImport}
-import type { ${name} } from "@/api/${lower}.types"
+import { redirect } from "next/navigation"
+import { revalidatePath } from "next/cache"
+import { apiFetch } from "@/lib/fetch"
+import type { ${name} } from "@/api/${lower}.types"${formImport}
 
-export default async function ${name}ListPage() {
-  const items = await apiFetch<${name}[]>("/api/${lower}")
-${deleteAction}
+export default async function ${name}ListPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ action?: string; edit?: string }>
+}) {
+  const params = await searchParams
+  const items = await apiFetch<${name}[]>("/api/${lower}")${editingItemFetch}
+${createAction}${updateAction}${deleteAction}
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">${name}s</h1>${newButton}
-      </div>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">${newButton}
+        <h1 className="text-2xl font-bold text-gray-900">${name}s</h1>
+      </div>${newCard}${editCard}
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
