@@ -15,7 +15,8 @@ function enabledOps(mod: Module): string[] {
 }
 
 function fieldToInputJsx(field: Field, valueExpr?: string): string {
-  const n = field.name
+  const isRelation = typeof field.type === "object" && field.type.kind === "relation"
+  const n = isRelation ? `${field.name}Id` : field.name
   const label = capitalize(n)
   const dv = valueExpr ? ` defaultValue={${valueExpr}}` : ""
   const base = `className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"`
@@ -64,7 +65,8 @@ function fieldToInputJsx(field: Field, valueExpr?: string): string {
 }
 
 function fieldToFormDataParser(field: Field): string {
-  const n = field.name
+  const isRelation = typeof field.type === "object" && field.type.kind === "relation"
+  const n = isRelation ? `${field.name}Id` : field.name
   if (typeof field.type === "string") {
     switch (field.type) {
       case "integer":
@@ -83,10 +85,12 @@ function fieldToFormDataParser(field: Field): string {
 }
 
 function fieldToDisplayValue(field: Field): string {
+  const isRelation = typeof field.type === "object" && field.type.kind === "relation"
+  const n = isRelation ? `${field.name}Id` : field.name
   if (typeof field.type === "string" && field.type === "boolean") {
-    return `item.${field.name} ? "Sim" : "Não"`
+    return `item.${n} ? "Sim" : "Não"`
   }
-  return `item.${field.name} !== undefined && item.${field.name} !== null ? String(item.${field.name}) : "—"`
+  return `item.${n} !== undefined && item.${n} !== null ? String(item.${n}) : "—"`
 }
 
 // ─── Scaffold templates ────────────────────────────────────────────────────
@@ -711,7 +715,15 @@ export function generateModuleFormComponent(mod: Module): string {
   const fields = domainFields(mod)
 
   const inputs = fields
-    .map((f) => fieldToInputJsx(f, `defaultValues?.${f.name} !== undefined ? String(defaultValues.${f.name}) : undefined`))
+    .map((f) => {
+      const isRelation = typeof f.type === "object" && f.type.kind === "relation"
+      const isBool = typeof f.type === "string" && f.type === "boolean"
+      const key = isRelation ? `${f.name}Id` : f.name
+      const ve = isBool
+        ? `defaultValues?.${key} ?? false`
+        : `defaultValues?.${key} !== undefined ? String(defaultValues.${key}) : undefined`
+      return fieldToInputJsx(f, ve)
+    })
     .join("\n")
 
   return `import type { ${name} } from "@/api/${lower}.types"
