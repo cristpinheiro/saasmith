@@ -15,11 +15,13 @@ export function generatePackageJson(projectName: string): string {
       dependencies: {
         fastify: "^5.0.0",
         "@fastify/jwt": "^9.0.0",
+        "@fastify/cors": "^10.0.0",
         "fastify-plugin": "^4.5.1",
         "drizzle-orm": "^0.40.0",
         pg: "^8.13.0",
         bcryptjs: "^2.4.3",
         dotenv: "^16.4.5",
+        zod: "^3.24.0",
       },
       devDependencies: {
         typescript: "^5.7.0",
@@ -72,10 +74,21 @@ export default {
 `
 }
 
-export function generateEnvExample(): string {
+export function generateEnvExample(roles: Role[] = []): string {
+  const candidates = roles.filter(
+    (role) => !["admin", "superadmin", "root"].includes(role.name.toLowerCase())
+  )
+  const selfRegisterRoles =
+    (candidates.length > 0 ? candidates : roles).map((role) => role.name).join(",") || "user"
+
   return `DATABASE_URL=postgresql://user:password@localhost:5432/dbname
 JWT_SECRET=change-this-to-a-long-random-secret
 PORT=3333
+# Origens permitidas no CORS (separadas por vírgula)
+CORS_ORIGIN=http://localhost:3000
+APP_URL=http://localhost:3000
+# Roles que podem se cadastrar sozinhas; remova roles privilegiadas desta lista
+SELF_REGISTER_ROLES=${selfRegisterRoles}
 `
 }
 
@@ -109,24 +122,27 @@ declare module "fastify" {
 }
 
 export default fp(async (app: FastifyInstance) => {
-  app.register(jwt, { secret: process.env.JWT_SECRET ?? "changeme-set-in-env" })
+  const secret = process.env.JWT_SECRET
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET is required in production")
+  }
+  app.register(jwt, { secret: secret ?? "dev-only-insecure-secret" })
 
   app.decorate("authenticate", async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       await request.jwtVerify()
-    } catch (err) {
-      reply.send(err)
+    } catch {
+      reply.code(401).send({ message: "Unauthorized" })
     }
   })
 })
 `
 }
 
-export function generateAppEntrypoint(modules: Module[]): string {
+export function generateApp(modules: Module[]): string {
   const imports = modules
     .map((m) => {
       const lower = m.name.toLowerCase()
-      const cap = m.name.charAt(0).toUpperCase() + m.name.slice(1)
       return `import { ${lower}Routes } from "./routes/${lower}.routes"`
     })
     .join("\n")
@@ -134,27 +150,51 @@ export function generateAppEntrypoint(modules: Module[]): string {
   const registers = modules
     .map((m) => {
       const lower = m.name.toLowerCase()
-      return `app.register(${lower}Routes, { prefix: "/api" })`
+      return `  app.register(${lower}Routes, { prefix: "/api" })`
     })
     .join("\n")
 
   return `import Fastify from "fastify"
+import cors from "@fastify/cors"
 import "dotenv/config"
 import authPlugin from "./plugins/auth.plugin"
 import { authRoutes } from "./routes/auth.routes"
 ${imports}
 
-const app = Fastify({ logger: true })
+export function buildApp() {
+  const app = Fastify({ logger: process.env.NODE_ENV !== "test" })
 
-app.register(authPlugin)
-app.register(authRoutes, { prefix: "/api/auth" })
+  const origins = (process.env.CORS_ORIGIN ?? process.env.APP_URL ?? "http://localhost:3000")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+
+  app.register(cors, { origin: origins, credentials: true })
+  app.get("/health", async () => ({ status: "ok" }))
+
+  app.register(authPlugin)
+  app.register(authRoutes, { prefix: "/api/auth" })
 ${registers}
 
+  return app
+}
+`
+}
+
+export function generateIndexTs(): string {
+  return `import "dotenv/config"
+import { buildApp } from "./app"
+
+const app = buildApp()
 const port = Number(process.env.PORT) || 3333
-app.listen({ port, host: "0.0.0.0" }, (err) => {
-  if (err) { app.log.error(err); process.exit(1) }
-  console.log(\`Server running on http://localhost:\${port}\`)
-})
+
+app
+  .listen({ port, host: "0.0.0.0" })
+  .then(() => app.log.info(\`Server running on http://localhost:\${port}\`))
+  .catch((err) => {
+    app.log.error(err)
+    process.exit(1)
+  })
 `
 }
 
@@ -195,32 +235,62 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email);
 }
 
 export function generateAuthRoutes(roles: Role[]): string {
-  const roleEnum = roles.map((r) => `"${r.name}"`).join(" | ") || "string"
+  const roleValues = roles.map((role) => JSON.stringify(role.name)).join(", ")
+  const roleSchema = roleValues ? `z.enum([${roleValues}])` : "z.string().min(1)"
+  const candidates = roles.filter(
+    (role) => !["admin", "superadmin", "root"].includes(role.name.toLowerCase())
+  )
+  const defaultSelfRegister =
+    (candidates.length > 0 ? candidates : roles).map((role) => role.name).join(",") || "user"
+
   return `import type { FastifyInstance } from "fastify"
+import { z } from "zod"
 import { authService } from "../services/auth.service"
+
+const SELF_REGISTER_ROLES = (process.env.SELF_REGISTER_ROLES ?? "${defaultSelfRegister}")
+  .split(",")
+  .map((role) => role.trim())
+  .filter(Boolean)
+
+const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8, "A senha deve ter pelo menos 8 caracteres"),
+  role: ${roleSchema},
+})
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+})
 
 export async function authRoutes(app: FastifyInstance) {
   app.post("/register", async (req, reply) => {
-    const { email, password, role } = req.body as { email: string; password: string; role: ${roleEnum} }
-    const result = await authService.register(email, password, role)
-    return reply.status(201).send(result)
+    const parsed = registerSchema.safeParse(req.body)
+    if (!parsed.success) return reply.status(422).send({ message: "Dados inválidos", issues: parsed.error.issues })
+    if (!SELF_REGISTER_ROLES.includes(parsed.data.role))
+      return reply.status(403).send({ message: "Role não permitida para cadastro" })
+
+    try {
+      const result = await authService.register(parsed.data.email, parsed.data.password, parsed.data.role)
+      return reply.status(201).send(result)
+    } catch (err) {
+      if (err instanceof Error && err.message === "EMAIL_IN_USE")
+        return reply.status(409).send({ message: "E-mail já cadastrado" })
+      throw err
+    }
   })
 
   app.post("/login", async (req, reply) => {
-    const { email, password } = req.body as { email: string; password: string }
-    const result = await authService.login(email, password, app)
+    const parsed = loginSchema.safeParse(req.body)
+    if (!parsed.success) return reply.status(422).send({ message: "Dados inválidos", issues: parsed.error.issues })
+
+    const result = await authService.login(parsed.data.email, parsed.data.password, app)
     if (!result) return reply.status(401).send({ message: "Invalid credentials" })
     return reply.send(result)
   })
 
   app.get("/me", { preHandler: [app.authenticate] }, async (req, reply) => {
     return reply.send(req.user)
-  })
-
-  app.patch("/tenant", { preHandler: [app.authenticate] }, async (req, reply) => {
-    const { tenantId } = req.body as { tenantId: string }
-    await authService.setTenant(req.user.id, tenantId)
-    return reply.send({ ok: true })
   })
 }
 `
@@ -235,16 +305,25 @@ import type { FastifyInstance } from "fastify"
 
 export class AuthService {
   async register(email: string, password: string, role: string) {
-    const existing = await db.select().from(usersTable).where(eq(usersTable.email, email))
-    if (existing.length > 0) throw new Error("Email already in use")
+    const normalizedEmail = email.trim().toLowerCase()
+    const existing = await db
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .where(eq(usersTable.email, normalizedEmail))
+    if (existing.length > 0) throw new Error("EMAIL_IN_USE")
+
     const hash = await bcrypt.hash(password, 10)
-    const [user] = await db.insert(usersTable).values({ email, password: hash, role }).returning()
+    const [user] = await db
+      .insert(usersTable)
+      .values({ email: normalizedEmail, password: hash, role })
+      .returning()
     const { password: _, ...safe } = user
     return safe
   }
 
   async login(email: string, password: string, app: FastifyInstance) {
-    const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email))
+    const normalizedEmail = email.trim().toLowerCase()
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.email, normalizedEmail))
     if (!user) return null
     const valid = await bcrypt.compare(password, user.password)
     if (!valid) return null

@@ -18,6 +18,13 @@ export type SetupResult =
       message: string
     }
 
+type AiOperationInput = {
+  type: string
+  enabled: boolean
+  roles?: string[]
+  rules?: Operation["rules"]
+}
+
 type AnthropicContent =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
@@ -115,7 +122,7 @@ function parseAnthropicResponse(response: AnthropicResponse): AiResult {
         name: string
         tableName: string
         fields: { name: string; type: string; nullable: boolean; unique: boolean }[]
-        operations: { type: string; enabled: boolean; roles: string[] }[]
+        operations: AiOperationInput[]
       }
       return {
         name: input.name,
@@ -131,11 +138,10 @@ function parseAnthropicResponse(response: AnthropicResponse): AiResult {
         ),
         operations: (input.operations ?? []).map(
           (o): Operation => {
-            const raw = o as any
             return {
               type: o.type as Operation["type"],
               enabled: o.enabled,
-              rules: raw.rules ?? (o.roles?.length > 0 ? [{ roles: o.roles, scope: "all" as const }] : []),
+              rules: o.rules ?? (o.roles?.length ? [{ roles: o.roles, scope: "all" as const }] : []),
             }
           }
         ),
@@ -294,7 +300,7 @@ function parseSetupResponse(response: AnthropicResponse): SetupResult {
         name: string
         tableName: string
         fields: { name: string; type: string; nullable: boolean; unique: boolean }[]
-        operations: { type: string; enabled: boolean; roles: string[] }[]
+        operations: AiOperationInput[]
       }[]
     }
     const textBlock = response.content.find((c) => c.type === "text") as
@@ -311,14 +317,11 @@ function parseSetupResponse(response: AnthropicResponse): SetupResult {
         nullable: f.nullable ?? false,
         unique: f.unique ?? false,
       })),
-      operations: (m.operations ?? []).map((o): Operation => {
-        const raw = o as any
-        return {
-          type: o.type as Operation["type"],
-          enabled: o.enabled,
-          rules: raw.rules ?? (o.roles?.length > 0 ? [{ roles: o.roles, scope: "all" as const }] : []),
-        }
-      }),
+      operations: (m.operations ?? []).map((o): Operation => ({
+        type: o.type as Operation["type"],
+        enabled: o.enabled,
+        rules: o.rules ?? (o.roles?.length ? [{ roles: o.roles, scope: "all" as const }] : []),
+      })),
     }))
 
     return {

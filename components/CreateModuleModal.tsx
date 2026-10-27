@@ -167,15 +167,15 @@ export default function CreateModuleModal({ onClose, initialModule }: Props) {
 
   function handleSubmit() {
     if (!name.trim()) return
-    const module: Module = {
+    const nextModule: Module = {
       id: initialModule?.id ?? crypto.randomUUID(),
       name: name.trim(),
       tableName: tableName || toTableName(name),
       fields,
       operations,
     }
-    if (isEditing) updateModule(module)
-    else addModule(module)
+    if (isEditing) updateModule(nextModule)
+    else addModule(nextModule)
     onClose()
   }
 

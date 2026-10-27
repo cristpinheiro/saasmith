@@ -8,6 +8,9 @@ import {
   generateFrontendTypes,
   generateMigration,
   generateReadme,
+  generateValidationSchema,
+  migrationFileName,
+  getProjectTenancyErrors,
 } from "./templates"
 import {
   generatePackageJson,
@@ -16,7 +19,8 @@ import {
   generateEnvExample,
   generateDbTs,
   generateAuthPlugin,
-  generateAppEntrypoint,
+  generateApp,
+  generateIndexTs,
   generateUserSchema,
   generateUserMigration,
   generateAuthRoutes,
@@ -45,6 +49,7 @@ import {
   generateDashboardPage,
   generateModuleListPage,
   generateModuleDetailPage,
+  generateModuleNewPage,
   generateModuleFormComponent,
 } from "./templates-frontend"
 
@@ -53,17 +58,26 @@ type GeneratedFile = {
   content: string
 }
 
+function assertTenancy(project?: Project) {
+  if (!project) return
+  const errors = getProjectTenancyErrors(project)
+  if (errors.length > 0) throw new Error(errors.join("\n"))
+}
+
 export function getGeneratedFiles(mod: Module, outputPath: string, project?: Project): GeneratedFile[] {
+  assertTenancy(project)
+
   const lower = mod.name.toLowerCase()
   const backendBase = `${outputPath}/backend/src`
   const frontendBase = `${outputPath}/frontend/src/api`
 
   return [
     { path: `${backendBase}/schema/${lower}.schema.ts`, content: generateSchema(mod) },
+    { path: `${backendBase}/validation/${lower}.validation.ts`, content: generateValidationSchema(mod) },
     { path: `${backendBase}/repositories/${lower}.repository.ts`, content: generateRepository(mod, project) },
     { path: `${backendBase}/services/${lower}.service.ts`, content: generateService(mod, project) },
     { path: `${backendBase}/routes/${lower}.routes.ts`, content: generateController(mod, project) },
-    { path: `${backendBase}/migrations/create_${mod.tableName}.sql`, content: generateMigration(mod) },
+    { path: `${backendBase}/migrations/${migrationFileName(mod, project)}`, content: generateMigration(mod, project) },
     { path: `${frontendBase}/${lower}.types.ts`, content: generateFrontendTypes(mod) },
     { path: `${frontendBase}/${lower}.api.ts`, content: generateApiClient(mod) },
   ]
@@ -81,6 +95,8 @@ export async function generateModule(mod: Module, outputPath: string, project?: 
 }
 
 export async function generateProjectFiles(project: Project, outputPath: string): Promise<string[]> {
+  assertTenancy(project)
+
   const { invoke } = await import("@tauri-apps/api/core")
   const b = `${outputPath}/backend`
 
@@ -91,13 +107,14 @@ export async function generateProjectFiles(project: Project, outputPath: string)
     { path: `${b}/package.json`, content: generatePackageJson(project.name) },
     { path: `${b}/tsconfig.json`, content: generateTsConfig() },
     { path: `${b}/drizzle.config.ts`, content: generateDrizzleConfig() },
-    { path: `${b}/.env.example`, content: generateEnvExample() },
+    { path: `${b}/.env.example`, content: generateEnvExample(project.roles) },
     { path: `${b}/src/db.ts`, content: generateDbTs() },
-    { path: `${b}/src/index.ts`, content: generateAppEntrypoint(project.modules) },
+    { path: `${b}/src/app.ts`, content: generateApp(project.modules) },
+    { path: `${b}/src/index.ts`, content: generateIndexTs() },
     { path: `${b}/src/plugins/auth.plugin.ts`, content: generateAuthPlugin() },
     // Auth module
     { path: `${b}/src/schema/user.schema.ts`, content: generateUserSchema() },
-    { path: `${b}/src/migrations/create_users.sql`, content: generateUserMigration() },
+    { path: `${b}/src/migrations/001_create_users.sql`, content: generateUserMigration() },
     { path: `${b}/src/routes/auth.routes.ts`, content: generateAuthRoutes(project.roles) },
     { path: `${b}/src/services/auth.service.ts`, content: generateAuthService() },
     { path: `${b}/src/migrate.ts`, content: generateMigrateScript() },
@@ -115,6 +132,8 @@ export async function generateProjectFiles(project: Project, outputPath: string)
 }
 
 export async function generateFrontendFiles(project: Project, outputPath: string): Promise<string[]> {
+  assertTenancy(project)
+
   const { invoke } = await import("@tauri-apps/api/core")
   const f = `${outputPath}/frontend`
   const s = `${f}/src`
@@ -127,7 +146,7 @@ export async function generateFrontendFiles(project: Project, outputPath: string
     { path: `${f}/.env.local.example`, content: generateFrontendEnvExample() },
     { path: `${f}/.env.local`, content: generateFrontendEnvExample() },
     { path: `${s}/app/globals.css`, content: generateGlobalCss() },
-    { path: `${s}/proxy.ts`, content: generateProxyTs() },
+    { path: `${s}/proxy.ts`, content: generateProxyTs(project.modules) },
     { path: `${s}/lib/fetch.ts`, content: generateFetchLib() },
     { path: `${s}/app/actions/auth.ts`, content: generateAuthActions(project.roles) },
     { path: `${s}/app/layout.tsx`, content: generateRootLayout(project) },
@@ -144,10 +163,12 @@ export async function generateFrontendFiles(project: Project, outputPath: string
     const lower = mod.name.toLowerCase()
     const Name = mod.name.charAt(0).toUpperCase() + mod.name.slice(1)
     const base = `${s}/app/dashboard/${lower}`
-    if (ops.includes("readMany")) files.push({ path: `${base}/page.tsx`, content: generateModuleListPage(mod) })
+    if (ops.includes("readMany")) files.push({ path: `${base}/page.tsx`, content: generateModuleListPage(mod, project) })
     if (ops.includes("readOne"))  files.push({ path: `${base}/[id]/page.tsx`, content: generateModuleDetailPage(mod) })
+    if (ops.includes("create") && !ops.includes("readMany"))
+      files.push({ path: `${base}/new/page.tsx`, content: generateModuleNewPage(mod, project) })
     if (ops.includes("create") || ops.includes("update"))
-      files.push({ path: `${s}/components/${Name}Form.tsx`, content: generateModuleFormComponent(mod) })
+      files.push({ path: `${s}/components/${Name}Form.tsx`, content: generateModuleFormComponent(mod, project) })
   }
 
   for (const file of files) {

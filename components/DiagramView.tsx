@@ -42,7 +42,7 @@ export default function DiagramView() {
   const svgRef = useRef<SVGSVGElement>(null)
   const [hovered, setHovered] = useState<string | null>(null)
 
-  const modules = project?.modules ?? []
+  const modules = useMemo(() => project?.modules ?? [], [project])
 
   const posMap = useMemo(() => {
     const map = new Map<string, Pos>()

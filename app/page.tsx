@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useProjectStore } from "../lib/store/project"
 import { useUiStore } from "../lib/store/ui"
 import WelcomeScreen from "../components/WelcomeScreen"
@@ -14,18 +14,13 @@ import DiagramView from "../components/DiagramView"
 
 export default function Home() {
   const project = useProjectStore((s) => s.project)
-  const { pendingChatMessages } = useUiStore()
+  const chatOpen = useUiStore((s) => s.chatOpen)
+  const setChatOpen = useUiStore((s) => s.setChatOpen)
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [showChat, setShowChat] = useState(false)
   const [showDiagram, setShowDiagram] = useState(false)
-
-  // Auto-open chat when project is created from the onboarding flow
-  useEffect(() => {
-    if (project && pendingChatMessages) setShowChat(true)
-  }, [project, pendingChatMessages])
 
   if (!project) return <WelcomeScreen />
 
@@ -35,8 +30,8 @@ export default function Home() {
     <div className="flex h-full flex-col">
       <Header
         onOpenSettings={() => setShowSettings(true)}
-        onToggleChat={() => setShowChat((v) => !v)}
-        showChat={showChat}
+        onToggleChat={() => setChatOpen(!chatOpen)}
+        showChat={chatOpen}
         showDiagram={showDiagram}
         onToggleDiagram={() => { setShowDiagram((v) => !v); setSelectedModuleId(null) }}
       />
@@ -61,7 +56,7 @@ export default function Home() {
             </div>
           )}
         </main>
-        {showChat && <AiChat onClose={() => setShowChat(false)} />}
+        {chatOpen && <AiChat onClose={() => setChatOpen(false)} />}
       </div>
 
       {showCreateModal && (

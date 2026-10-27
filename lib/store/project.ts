@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import type { Project, Module, Role } from "../types"
+import type { Project, Module, Role, Operation } from "../types"
 import { isTauri } from "../env"
 
 type ProjectStore = {
@@ -24,19 +24,28 @@ type ProjectStore = {
   removeRole: (roleId: string) => void
 }
 
-function migrateProject(raw: any): Project {
+type LegacyOperation = {
+  type: Operation["type"]
+  enabled: boolean
+  rules?: Operation["rules"]
+  roles?: string[]
+}
+
+type StoredProject = Omit<Project, "modules"> & {
+  modules?: Array<Omit<Module, "operations"> & { operations?: LegacyOperation[] }>
+}
+
+function migrateProject(raw: unknown): Project {
+  const data = raw as StoredProject
   return {
-    ...raw,
-    modules: (raw.modules ?? []).map((mod: any) => ({
+    ...data,
+    modules: (data.modules ?? []).map((mod) => ({
       ...mod,
-      operations: (mod.operations ?? []).map((op: any) => {
-        if (op.rules) return op
-        const { roles: _r, ...rest } = op
-        return {
-          ...rest,
-          rules: op.roles?.length > 0 ? [{ roles: op.roles, scope: "all" }] : [],
-        }
-      }),
+      operations: (mod.operations ?? []).map((op): Operation => ({
+        type: op.type,
+        enabled: op.enabled,
+        rules: op.rules ?? (op.roles?.length ? [{ roles: op.roles, scope: "all" as const }] : []),
+      })),
     })),
   }
 }

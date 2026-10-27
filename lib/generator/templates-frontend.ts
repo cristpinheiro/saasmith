@@ -1,4 +1,5 @@
-import type { Field, FieldType, Module, Project, Role } from "../types"
+import type { Field, FieldType, Module, OperationType, Project, Role } from "../types"
+import { getServerManagedFields, isTenantRoot } from "./templates"
 
 const AUTO_FIELDS = new Set(["id", "createdAt", "updatedAt", "created_at", "updated_at"])
 
@@ -8,6 +9,32 @@ function domainFields(mod: Module): Field[] {
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function apiPath(mod: Module): string {
+  return mod.tableName
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[_\s]+/g, "-")
+    .toLowerCase()
+}
+
+function moduleApiPath(project: Project | undefined, moduleName: string): string {
+  const target = project?.modules.find((m) => m.name.toLowerCase() === moduleName.toLowerCase())
+  if (target) return apiPath(target)
+  return `${moduleName
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[_\s]+/g, "-")
+    .toLowerCase()}s`
+}
+
+function payloadKey(field: Field): string {
+  return isRelationType(field.type) ? `${field.name}Id` : field.name
+}
+
+function allowedRoles(mod: Module, type: OperationType): string[] {
+  const operation = mod.operations.find((op) => op.enabled && op.type === type)
+  if (!operation) return []
+  return [...new Set(operation.rules.flatMap((rule) => rule.roles))]
 }
 
 function fieldLabel(field: Field): string {
@@ -209,15 +236,57 @@ export function generateFrontendEnvExample(): string {
 `
 }
 
-export function generateProxyTs(): string {
+export function generateProxyTs(modules: Module[]): string {
+  const accessRules = modules
+    .map((mod) => {
+      const readOp = mod.operations.find((o) => o.enabled && (o.type === "readMany" || o.type === "readOne"))
+      const fallbackOp = mod.operations.find((o) => o.enabled && o.type === "create")
+      const roles = [...new Set(((readOp ?? fallbackOp)?.rules ?? []).flatMap((r) => r.roles))]
+      if (roles.length === 0) return null
+      return { prefix: `/dashboard/${mod.name.toLowerCase()}`, roles }
+    })
+    .filter((rule): rule is { prefix: string; roles: string[] } => rule !== null)
+
   return `import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
+
+const MODULE_ACCESS: { prefix: string; roles: string[] }[] = ${JSON.stringify(accessRules, null, 2)}
+
+function decodeRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1]
+    if (!payload) return null
+    const json = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { role?: unknown }
+    return typeof json.role === "string" ? json.role : null
+  } catch {
+    return null
+  }
+}
 
 export function proxy(request: NextRequest) {
   const token = request.cookies.get("token")?.value
   if (!token) {
     return NextResponse.redirect(new URL("/login", request.url))
   }
+
+  // Only page navigations are guarded here; API routes enforce their own authorization.
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return NextResponse.next()
+  }
+
+  const role = decodeRole(token)
+  if (!role) {
+    return NextResponse.redirect(new URL("/login", request.url))
+  }
+
+  const { pathname } = request.nextUrl
+  const rule = MODULE_ACCESS.find(
+    (entry) => pathname === entry.prefix || pathname.startsWith(\`\${entry.prefix}/\`)
+  )
+  if (rule && !rule.roles.includes(role)) {
+    return NextResponse.redirect(new URL("/dashboard", request.url))
+  }
+
   return NextResponse.next()
 }
 
@@ -238,14 +307,29 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   const res = await fetch(\`\${API_URL}\${path}\`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: \`Bearer \${token}\` } : {}),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
   })
   if (!res.ok) throw new Error(await res.text())
-  return res.json() as Promise<T>
+  if (res.status === 204) return undefined as T
+  const text = await res.text()
+  return (text ? JSON.parse(text) : undefined) as T
+}
+
+export async function getSessionRole(): Promise<string | null> {
+  const token = (await cookies()).get("token")?.value
+  if (!token) return null
+  try {
+    const payload = token.split(".")[1]
+    if (!payload) return null
+    const json = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { role?: unknown }
+    return typeof json.role === "string" ? json.role : null
+  } catch {
+    return null
+  }
 }
 `
 }
@@ -261,6 +345,11 @@ import { redirect } from "next/navigation"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333"
 
+async function readError(res: Response, fallback: string) {
+  const data = (await res.json().catch(() => null)) as { message?: string } | null
+  return data?.message ?? fallback
+}
+
 export async function loginAction(_prev: string | null, formData: FormData) {
   const email = formData.get("email") as string
   const password = formData.get("password") as string
@@ -271,7 +360,7 @@ export async function loginAction(_prev: string | null, formData: FormData) {
     body: JSON.stringify({ email, password }),
   })
 
-  if (!res.ok) return "Email ou senha inválidos"
+  if (!res.ok) return readError(res, "Email ou senha inválidos")
 
   const { token } = await res.json()
   const cookieStore = await cookies()
@@ -297,7 +386,7 @@ export async function registerAction(_prev: string | null, formData: FormData) {
     body: JSON.stringify({ email, password, role }),
   })
 
-  if (!regRes.ok) return "Erro ao criar conta"
+  if (!regRes.ok) return readError(regRes, "Erro ao criar conta")
 
   const loginRes = await fetch(\`\${API_URL}/api/auth/login\`, {
     method: "POST",
@@ -406,13 +495,17 @@ export default function LoginPage() {
 }
 
 export function generateRegisterPage(roles: Role[]): string {
+  const candidates = roles.filter(
+    (role) => !["admin", "superadmin", "root"].includes(role.name.toLowerCase())
+  )
+  const availableRoles = candidates.length > 0 ? candidates : roles
   const roleSelect =
-    roles.length > 0
+    availableRoles.length > 0
       ? `
           <div>
             <label htmlFor="role" className="block text-sm font-medium text-gray-700 mb-1">Perfil</label>
             <select id="role" name="role" className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-${roles.map((r) => `              <option value="${r.name}">${capitalize(r.name)}</option>`).join("\n")}
+${availableRoles.map((r) => `              <option value="${r.name}">${capitalize(r.name)}</option>`).join("\n")}
             </select>
           </div>`
       : ""
@@ -440,7 +533,7 @@ export default function RegisterPage() {
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
             <input
-              type="password" id="password" name="password" required autoComplete="new-password"
+              type="password" id="password" name="password" required minLength={8} autoComplete="new-password"
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>${roleSelect}
@@ -494,22 +587,26 @@ export function generateDashboardLayout(modules: Module[]): string {
   const mobileLinks = readManyModules
     .map((m) => {
       const lower = m.name.toLowerCase()
-      return `          <Link href="/dashboard/${lower}" className="shrink-0 rounded px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">${m.name}</Link>`
+      const roles = JSON.stringify(allowedRoles(m, "readMany"))
+      return `          {role !== null && ${roles}.includes(role) && (<Link href="/dashboard/${lower}" className="shrink-0 rounded px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">${m.name}</Link>)}`
     })
     .join("\n")
 
   const sidebarLinks = readManyModules
     .map((m) => {
       const lower = m.name.toLowerCase()
-      return `          <Link href="/dashboard/${lower}" className="rounded px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">${m.name}</Link>`
+      const roles = JSON.stringify(allowedRoles(m, "readMany"))
+      return `          {role !== null && ${roles}.includes(role) && (<Link href="/dashboard/${lower}" className="rounded px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors">${m.name}</Link>)}`
     })
     .join("\n")
 
   return `import Link from "next/link"
 import type { ReactNode } from "react"
 import LogoutButton from "@/components/LogoutButton"
+import { getSessionRole } from "@/lib/fetch"
 
-export default function DashboardLayout({ children }: { children: ReactNode }) {
+export default async function DashboardLayout({ children }: { children: ReactNode }) {
+  const role = await getSessionRole()
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
       {/* Mobile top nav */}
@@ -551,20 +648,28 @@ export function generateDashboardPage(modules: Module[]): string {
     .map((m) => {
       const lower = m.name.toLowerCase()
       const hasReadMany = m.operations.some((o) => o.enabled && o.type === "readMany")
+      const hasCreate = m.operations.some((o) => o.enabled && o.type === "create")
+      if (!hasReadMany && !hasCreate) return null
       const href = hasReadMany ? `/dashboard/${lower}` : `/dashboard/${lower}/new`
-      return `      <Link
-        href="${href}"
-        className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-300 transition-all"
-      >
-        <span className="text-base font-semibold text-gray-900">${m.name}</span>
-        <span className="text-sm text-gray-500">${m.operations.filter((o) => o.enabled).length} operações</span>
-      </Link>`
+      const roles = JSON.stringify(hasReadMany ? allowedRoles(m, "readMany") : allowedRoles(m, "create"))
+      return `      {role !== null && ${roles}.includes(role) && (
+        <Link
+          href="${href}"
+          className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-300 transition-all"
+        >
+          <span className="text-base font-semibold text-gray-900">${m.name}</span>
+          <span className="text-sm text-gray-500">${m.operations.filter((o) => o.enabled).length} operações</span>
+        </Link>
+      )}`
     })
+    .filter((card): card is string => card !== null)
     .join("\n")
 
   return `import Link from "next/link"
+import { getSessionRole } from "@/lib/fetch"
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const role = await getSessionRole()
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Dashboard</h1>
@@ -579,12 +684,17 @@ ${cards}
 
 // ─── Per-module templates ──────────────────────────────────────────────────
 
-export function generateModuleListPage(mod: Module): string {
+export function generateModuleListPage(mod: Module, project?: Project): string {
   const name = capitalize(mod.name)
   const lower = mod.name.toLowerCase()
+  const apiBase = apiPath(mod)
   const ops = enabledOps(mod)
   const fields = domainFields(mod)
-  const relFields = fields.filter((f) => isRelationType(f.type))
+  const managedFields = new Set(getServerManagedFields(mod, project))
+  const formFields = fields.filter((f) =>
+    !managedFields.has(typeof f.type === "object" ? `${f.name}Id` : f.name)
+  )
+  const relFields = formFields.filter((f) => isRelationType(f.type))
 
   const relationImports = relFields
     .map((f) => {
@@ -598,9 +708,9 @@ export function generateModuleListPage(mod: Module): string {
   const relationFetches = relFields
     .map((f) => {
       const ft = f.type as { kind: "relation"; module: string }
-      const relLower = ft.module.toLowerCase()
       const relName = capitalize(ft.module)
-      return `  const ${f.name}Options = await apiFetch<${relName}[]>("/api/${relLower}").catch(() => [])`
+      const relApi = moduleApiPath(project, ft.module)
+      return `  const ${f.name}Options = await apiFetch<${relName}[]>("/api/${relApi}").catch(() => [])`
     })
     .join("\n")
 
@@ -608,8 +718,8 @@ export function generateModuleListPage(mod: Module): string {
     ? " " + relFields.map((f) => `${f.name}Options={${f.name}Options}`).join(" ")
     : ""
 
-  const parsers = fields
-    .map((f) => `      ${typeof f.type === "object" && f.type.kind === "relation" ? `${f.name}Id` : f.name}: ${fieldToFormDataParser(f)},`)
+  const parsers = formFields
+    .map((f) => `      ${payloadKey(f)}: ${fieldToFormDataParser(f)},`)
     .join("\n")
 
   const thCells = fields
@@ -623,23 +733,28 @@ export function generateModuleListPage(mod: Module): string {
     .map((f) => `                <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{${fieldToDisplayValue(f)}}</td>`)
     .join("\n")
 
+  const createsTenant = isTenantRoot(mod, project) && ops.includes("create")
   const createAction = ops.includes("create") ? `
   async function create${name}(formData: FormData) {
     "use server"
-    await apiFetch("/api/${lower}", {
+    await apiFetch("/api/${apiBase}", {
       method: "POST",
       body: JSON.stringify({
 ${parsers}
       }),
     })
-    revalidatePath("/dashboard/${lower}")
-    redirect("/dashboard/${lower}")
+${createsTenant
+  ? `    const cookieStore = await cookies()
+    cookieStore.delete("token")
+    redirect("/login")`
+  : `    revalidatePath("/dashboard/${lower}")
+    redirect("/dashboard/${lower}")`}
   }` : ""
 
   const updateAction = ops.includes("update") ? `
   async function update${name}(formData: FormData) {
     "use server"
-    await apiFetch(\`/api/${lower}/\${params.edit}\`, {
+    await apiFetch(\`/api/${apiBase}/\${params.edit}\`, {
       method: "PUT",
       body: JSON.stringify({
 ${parsers}
@@ -653,16 +768,16 @@ ${parsers}
   async function delete${name}(formData: FormData) {
     "use server"
     const id = formData.get("id") as string
-    await apiFetch(\`/api/${lower}/\${id}\`, { method: "DELETE" })
+    await apiFetch(\`/api/${apiBase}/\${id}\`, { method: "DELETE" })
     revalidatePath("/dashboard/${lower}")
   }` : ""
 
   const newButton = ops.includes("create")
-    ? `<Link href="?action=new" className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">Novo ${name}</Link>`
+    ? `{canCreate && (<Link href="?action=new" className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">Novo ${name}</Link>)}`
     : ""
 
   const newModal = ops.includes("create") ? `
-      {params.action === "new" && (
+      {canCreate && params.action === "new" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Link href="/dashboard/${lower}" className="absolute inset-0 bg-black/50" aria-label="Fechar" />
           <div className="relative z-10 w-full max-w-lg bg-white rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
@@ -676,7 +791,7 @@ ${parsers}
       )}` : ""
 
   const editModal = ops.includes("update") ? `
-      {editingItem && (
+      {canUpdate && editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Link href="/dashboard/${lower}" className="absolute inset-0 bg-black/50" aria-label="Fechar" />
           <div className="relative z-10 w-full max-w-lg bg-white rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto">
@@ -690,7 +805,7 @@ ${parsers}
       )}` : ""
 
   const editLink = ops.includes("update")
-    ? `\n                  <Link href={\`?edit=\${item.id}\`} className="text-xs text-blue-600 hover:underline">Editar</Link>`
+    ? `\n                  {canUpdate && (<Link href={\`?edit=\${item.id}\`} className="text-xs text-blue-600 hover:underline">Editar</Link>)}`
     : ""
 
   const detailLink = ops.includes("readOne")
@@ -698,13 +813,13 @@ ${parsers}
     : ""
 
   const deleteButton = ops.includes("delete") ? `
-                  <form action={delete${name}} className="inline">
+                  {canDelete && (<form action={delete${name}} className="inline">
                     <input type="hidden" name="id" value={item.id} />
                     <button type="submit" className="text-xs text-red-600 hover:text-red-800 hover:underline">Excluir</button>
-                  </form>` : ""
+                  </form>)}` : ""
 
   const editingItemFetch = ops.includes("update")
-    ? `\n  const editingItem = params.edit ? await apiFetch<${name}>(\`/api/${lower}/\${params.edit}\`).catch(() => null) : null`
+    ? `\n  const editingItem = params.edit && canUpdate ? await apiFetch<${name}>(\`/api/${apiBase}/\${params.edit}\`).catch(() => null) : null`
     : ""
 
   const formImport = (ops.includes("create") || ops.includes("update"))
@@ -712,11 +827,15 @@ ${parsers}
     : ""
 
   const relImports = relationImports ? `\n${relationImports}` : ""
+  const cookiesImport = createsTenant ? `\nimport { cookies } from "next/headers"` : ""
+  const createRoles = JSON.stringify(allowedRoles(mod, "create"))
+  const updateRoles = JSON.stringify(allowedRoles(mod, "update"))
+  const deleteRoles = JSON.stringify(allowedRoles(mod, "delete"))
 
   return `import Link from "next/link"
 import { redirect } from "next/navigation"
-import { revalidatePath } from "next/cache"
-import { apiFetch } from "@/lib/fetch"
+import { revalidatePath } from "next/cache"${cookiesImport}
+import { apiFetch, getSessionRole } from "@/lib/fetch"
 import type { ${name} } from "@/api/${lower}.types"${formImport}${relImports}
 
 export default async function ${name}ListPage({
@@ -725,7 +844,11 @@ export default async function ${name}ListPage({
   searchParams: Promise<{ action?: string; edit?: string }>
 }) {
   const params = await searchParams
-  const items = await apiFetch<${name}[]>("/api/${lower}")${editingItemFetch}
+  const role = await getSessionRole()
+  const canCreate = role !== null && ${createRoles}.includes(role)
+  const canUpdate = role !== null && ${updateRoles}.includes(role)
+  const canDelete = role !== null && ${deleteRoles}.includes(role)
+  const items = await apiFetch<${name}[]>("/api/${apiBase}")${editingItemFetch}
 ${relationFetches ? relationFetches + "\n" : ""}${createAction}${updateAction}${deleteAction}
   return (
     <>
@@ -772,6 +895,7 @@ ${tdCells}
 export function generateModuleDetailPage(mod: Module): string {
   const name = capitalize(mod.name)
   const lower = mod.name.toLowerCase()
+  const apiBase = apiPath(mod)
   const ops = enabledOps(mod)
   const fields = domainFields(mod)
 
@@ -786,11 +910,12 @@ export function generateModuleDetailPage(mod: Module): string {
     .join("\n")
 
   const editLink = ops.includes("update")
-    ? `\n          <Link href={\`/dashboard/${lower}?edit=\${item.id}\`} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">Editar</Link>`
+    ? `\n          {canUpdate && (<Link href={\`/dashboard/${lower}?edit=\${item.id}\`} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors">Editar</Link>)}`
     : ""
+  const updateRoles = JSON.stringify(allowedRoles(mod, "update"))
 
   return `import Link from "next/link"
-import { apiFetch } from "@/lib/fetch"
+import { apiFetch, getSessionRole } from "@/lib/fetch"
 import type { ${name} } from "@/api/${lower}.types"
 
 export default async function ${name}DetailPage({
@@ -799,7 +924,9 @@ export default async function ${name}DetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const item = await apiFetch<${name}>(\`/api/${lower}/\${id}\`)
+  const item = await apiFetch<${name}>(\`/api/${apiBase}/\${id}\`)
+  const role = await getSessionRole()
+  const canUpdate = role !== null && ${updateRoles}.includes(role)
 
   return (
     <div className="max-w-2xl">
@@ -828,10 +955,13 @@ ${rows}
 `
 }
 
-export function generateModuleFormComponent(mod: Module): string {
+export function generateModuleFormComponent(mod: Module, project?: Project): string {
   const name = capitalize(mod.name)
   const lower = mod.name.toLowerCase()
-  const fields = domainFields(mod)
+  const managedFields = new Set(getServerManagedFields(mod, project))
+  const fields = domainFields(mod).filter((f) =>
+    !managedFields.has(typeof f.type === "object" ? `${f.name}Id` : f.name)
+  )
   const relFields = fields.filter((f) => isRelationType(f.type))
 
   const inputs = fields
@@ -879,41 +1009,74 @@ ${inputs}
 `
 }
 
-export function generateModuleNewPage(mod: Module): string {
+export function generateModuleNewPage(mod: Module, project?: Project): string {
   const name = capitalize(mod.name)
   const lower = mod.name.toLowerCase()
-  const fields = domainFields(mod)
+  const apiBase = apiPath(mod)
+  const managedFields = new Set(getServerManagedFields(mod, project))
+  const fields = domainFields(mod).filter((f) => !managedFields.has(payloadKey(f)))
+  const relFields = fields.filter((f) => isRelationType(f.type))
+  const redirectTo = mod.operations.some((o) => o.enabled && o.type === "readMany") ? `/dashboard/${lower}` : "/dashboard"
+  const createsTenant = isTenantRoot(mod, project)
+  const afterCreate = createsTenant
+    ? `    const cookieStore = await cookies()
+    cookieStore.delete("token")
+    redirect("/login")`
+    : `    revalidatePath("${redirectTo}")
+    redirect("${redirectTo}")`
 
-  const parsers = fields
-    .map((f) => `    ${f.name}: ${fieldToFormDataParser(f)},`)
+  const relationImports = relFields
+    .map((f) => {
+      const ft = f.type as { kind: "relation"; module: string }
+      return `import type { ${capitalize(ft.module)} } from "@/api/${ft.module.toLowerCase()}.types"`
+    })
     .join("\n")
 
+  const relationFetches = relFields
+    .map((f) => {
+      const ft = f.type as { kind: "relation"; module: string }
+      const relApi = moduleApiPath(project, ft.module)
+      return `  const ${f.name}Options = await apiFetch<${capitalize(ft.module)}[]>("/api/${relApi}").catch(() => [])`
+    })
+    .join("\n")
+
+  const optionPropSpread = relFields.length > 0
+    ? " " + relFields.map((f) => `${f.name}Options={${f.name}Options}`).join(" ")
+    : ""
+
+  const parsers = fields
+    .map((f) => `    ${payloadKey(f)}: ${fieldToFormDataParser(f)},`)
+    .join("\n")
+
+  const relImports = relationImports ? `\n${relationImports}` : ""
+  const fetches = relationFetches ? `\n${relationFetches}` : ""
+  const cookiesImport = createsTenant ? `\nimport { cookies } from "next/headers"` : ""
+
   return `import { redirect } from "next/navigation"
-import { revalidatePath } from "next/cache"
-import { apiFetch } from "@/lib/fetch"
+import { revalidatePath } from "next/cache"${cookiesImport}
+import { apiFetch } from "@/lib/fetch"${relImports}
 import ${name}Form from "@/components/${name}Form"
 
-export default function New${name}Page() {
+export default async function New${name}Page() {${fetches}
   async function create${name}(formData: FormData) {
     "use server"
-    await apiFetch("/api/${lower}", {
+    await apiFetch("/api/${apiBase}", {
       method: "POST",
       body: JSON.stringify({
 ${parsers}
       }),
     })
-    revalidatePath("/dashboard/${lower}")
-    redirect("/dashboard/${lower}")
+${afterCreate}
   }
 
   return (
     <div className="max-w-2xl">
       <div className="flex items-center gap-3 mb-6">
-        <a href="/dashboard/${lower}" className="text-sm text-gray-500 hover:text-gray-700">← Voltar</a>
+        <a href="${redirectTo}" className="text-sm text-gray-500 hover:text-gray-700">← Voltar</a>
         <h1 className="text-2xl font-bold text-gray-900">Novo ${name}</h1>
       </div>
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-        <${name}Form action={create${name}} submitLabel="Criar ${name}" />
+        <${name}Form action={create${name}} submitLabel="Criar ${name}"${optionPropSpread} />
       </div>
     </div>
   )
@@ -921,19 +1084,44 @@ ${parsers}
 `
 }
 
-export function generateModuleEditPage(mod: Module): string {
+export function generateModuleEditPage(mod: Module, project?: Project): string {
   const name = capitalize(mod.name)
   const lower = mod.name.toLowerCase()
-  const fields = domainFields(mod)
+  const apiBase = apiPath(mod)
+  const managedFields = new Set(getServerManagedFields(mod, project))
+  const fields = domainFields(mod).filter((f) => !managedFields.has(payloadKey(f)))
+  const relFields = fields.filter((f) => isRelationType(f.type))
+
+  const relationImports = relFields
+    .map((f) => {
+      const ft = f.type as { kind: "relation"; module: string }
+      return `import type { ${capitalize(ft.module)} } from "@/api/${ft.module.toLowerCase()}.types"`
+    })
+    .join("\n")
+
+  const relationFetches = relFields
+    .map((f) => {
+      const ft = f.type as { kind: "relation"; module: string }
+      const relApi = moduleApiPath(project, ft.module)
+      return `  const ${f.name}Options = await apiFetch<${capitalize(ft.module)}[]>("/api/${relApi}").catch(() => [])`
+    })
+    .join("\n")
+
+  const optionPropSpread = relFields.length > 0
+    ? " " + relFields.map((f) => `${f.name}Options={${f.name}Options}`).join(" ")
+    : ""
 
   const parsers = fields
-    .map((f) => `    ${f.name}: ${fieldToFormDataParser(f)},`)
+    .map((f) => `    ${payloadKey(f)}: ${fieldToFormDataParser(f)},`)
     .join("\n")
+
+  const relImports = relationImports ? `\n${relationImports}` : ""
+  const fetches = relationFetches ? `\n${relationFetches}` : ""
 
   return `import { redirect } from "next/navigation"
 import { revalidatePath } from "next/cache"
 import { apiFetch } from "@/lib/fetch"
-import type { ${name} } from "@/api/${lower}.types"
+import type { ${name} } from "@/api/${lower}.types"${relImports}
 import ${name}Form from "@/components/${name}Form"
 
 export default async function Edit${name}Page({
@@ -942,11 +1130,11 @@ export default async function Edit${name}Page({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const item = await apiFetch<${name}>(\`/api/${lower}/\${id}\`)
+  const item = await apiFetch<${name}>(\`/api/${apiBase}/\${id}\`)${fetches}
 
   async function update${name}(formData: FormData) {
     "use server"
-    await apiFetch(\`/api/${lower}/\${id}\`, {
+    await apiFetch(\`/api/${apiBase}/\${id}\`, {
       method: "PUT",
       body: JSON.stringify({
 ${parsers}
@@ -963,7 +1151,7 @@ ${parsers}
         <h1 className="text-2xl font-bold text-gray-900">Editar ${name}</h1>
       </div>
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-        <${name}Form action={update${name}} defaultValues={item} submitLabel="Salvar alterações" />
+        <${name}Form action={update${name}} defaultValues={item} submitLabel="Salvar alterações"${optionPropSpread} />
       </div>
     </div>
   )

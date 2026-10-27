@@ -16,7 +16,7 @@ type ChatEntry =
 export default function WelcomeScreen() {
   const { newProject, openProject } = useProjectStore()
   const { apiKey, authToken, baseUrl, model, setApiKey, setAuthToken } = useSettingsStore()
-  const { setPendingChatMessages } = useUiStore()
+  const { setPendingChatMessages, setChatOpen } = useUiStore()
 
   const [step, setStep] = useState<Step>("landing")
   const [projectName, setProjectName] = useState("")
@@ -167,6 +167,7 @@ export default function WelcomeScreen() {
     const builtRoles: Role[] = readyToOpen.roles.map((r) => ({ id: crypto.randomUUID(), name: r.name }))
     const builtModules: Module[] = readyToOpen.modules.map((m) => ({ ...m, id: crypto.randomUUID() }))
     newProject(projectName.trim(), builtRoles, builtModules)
+    setChatOpen(true)
   }
 
   function saveInlineCredentials() {
